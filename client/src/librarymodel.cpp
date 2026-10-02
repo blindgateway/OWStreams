@@ -34,6 +34,19 @@ QString buildSubtitle(const QVariantMap &row)
     return quality;
 }
 
+/// The absolute poster URL for a row, or an invalid QUrl.
+///
+/// Built from the poster *key* rather than trusting that a key implies a file:
+/// the server answers 404 for a title whose artwork was never fetched, and a
+/// row that knows it has no key must not ask for one on every scroll.
+QUrl buildPosterUrl(const QUrl &baseUrl, int mediaId, const QString &posterKey)
+{
+    if (baseUrl.isEmpty() || mediaId <= 0 || posterKey.isEmpty())
+        return {};
+    return QUrl(baseUrl.toString() + QStringLiteral("/api/v1/media/")
+                + QString::number(mediaId) + QStringLiteral("/poster"));
+}
+
 QStringList stringList(const QVariant &value)
 {
     QStringList out;
@@ -46,6 +59,30 @@ QStringList stringList(const QVariant &value)
 }  // namespace
 
 MediaListModel::MediaListModel(QObject *parent) : QAbstractListModel(parent) {}
+
+void MediaListModel::setBaseUrl(const QUrl &url)
+{
+    if (m_baseUrl == url)
+        return;
+    m_baseUrl = url;
+    // Rows carry a poster *key*; the absolute URL is built from it, so every
+    // row's URL just changed.
+    if (!m_entries.isEmpty()) {
+        emit dataChanged(index(0), index(int(m_entries.size()) - 1),
+                         {PosterUrlRole});
+    }
+    emit baseUrlChanged();
+}
+
+QUrl MediaListModel::posterUrlFor(int mediaId) const
+{
+    for (const Entry &entry : m_entries) {
+        if (entry.id == mediaId)
+            return buildPosterUrl(m_baseUrl, mediaId,
+                                  entry.values.value(QStringLiteral("posterKey")).toString());
+    }
+    return {};
+}
 
 int MediaListModel::rowCount(const QModelIndex &parent) const
 {
@@ -147,64 +184,97 @@ void MediaListModel::setEmptyMessage(const QString &message)
     emit emptyMessageChanged();
 }
 
+MediaListModel::Entry MediaListModel::buildEntry(const QJsonObject &object,
+                                                  ProgressMode progress) const
+{
+    Entry entry;
+    entry.progress = progress;
+    entry.id = object.value(QStringLiteral("id")).toInt();
+    entry.values = object.toVariantMap();
+
+    entry.values.insert(QStringLiteral("subtitle"), buildSubtitle(entry.values));
+    entry.values.insert(QStringLiteral("genres"),
+                        object.value(QStringLiteral("genres")).toArray());
+
+    // `percent` comes from the server for progress-bearing rails; without it
+    // there is no progress to draw and the card is a plain poster.
+    double fraction = 0.0;
+    QString progressText;
+    const QJsonValue percent = object.value(QStringLiteral("percent"));
+    if (percent.isDouble()) {
+        fraction = qBound(0.0, percent.toDouble(), 1.0);
+        const QJsonObject history = object.value(QStringLiteral("progress")).toObject();
+        const double position = history.value(QStringLiteral("position_seconds")).toDouble();
+        const double duration = history.value(QStringLiteral("duration_seconds")).toDouble();
+        if (duration > 0) {
+            const double remaining = qMax(0.0, duration - position);
+            progressText = QStringLiteral("%1 left").arg(
+                formatRuntime(static_cast<int>(remaining / 60.0)));
+        }
+    }
+    if (progress == ProgressMode::None) {
+        fraction = 0.0;
+        progressText.clear();
+    } else if (progress == ProgressMode::Remaining && progressText.isEmpty()) {
+        // A history rail that cannot say how much is left says nothing rather
+        // than showing a bar with no label.
+        fraction = 0.0;
+    }
+    entry.values.insert(QStringLiteral("progress"), fraction);
+    entry.values.insert(QStringLiteral("progressText"), progressText);
+    entry.values.insert(QStringLiteral("missing"),
+                        object.value(QStringLiteral("integrity_state")).toString()
+                            == QStringLiteral("missing"));
+
+    // A row with no artwork gets no URL at all, rather than one that would 404
+    // on every repaint of every delegate that shows it.
+    const QString posterKey = object.value(QStringLiteral("poster_key")).toString();
+    entry.values.insert(QStringLiteral("posterKey"), posterKey);
+    entry.values.insert(QStringLiteral("posterUrl"),
+                        buildPosterUrl(m_baseUrl, entry.id, posterKey));
+    return entry;
+}
+
 void MediaListModel::setItems(const QJsonArray &items, ProgressMode progress)
 {
+    m_progress = progress;
     beginResetModel();
     m_entries.clear();
     m_entries.reserve(items.size());
-
     for (const QJsonValue &value : items) {
-        if (!value.isObject())
-            continue;
-        const QJsonObject object = value.toObject();
-
-        Entry entry;
-        entry.progress = progress;
-        entry.id = object.value(QStringLiteral("id")).toInt();
-        entry.values = object.toVariantMap();
-
-        entry.values.insert(QStringLiteral("subtitle"),
-                            buildSubtitle(entry.values));
-        entry.values.insert(QStringLiteral("genres"),
-                            object.value(QStringLiteral("genres")).toArray());
-
-        // `percent` comes from the server for progress-bearing rails; without
-        // it there is no progress to draw and the card is a plain poster.
-        double fraction = 0.0;
-        QString progressText;
-        const QJsonValue percent = object.value(QStringLiteral("percent"));
-        if (percent.isDouble()) {
-            fraction = qBound(0.0, percent.toDouble(), 1.0);
-            const QJsonObject history =
-                object.value(QStringLiteral("progress")).toObject();
-            const double position = history.value(QStringLiteral("position_seconds")).toDouble();
-            const double duration = history.value(QStringLiteral("duration_seconds")).toDouble();
-            if (duration > 0) {
-                const double remaining = qMax(0.0, duration - position);
-                progressText = QStringLiteral("%1 left").arg(
-                    formatRuntime(static_cast<int>(remaining / 60.0)));
-            }
-        }
-        if (progress == ProgressMode::None) {
-            fraction = 0.0;
-            progressText.clear();
-        } else if (progress == ProgressMode::Remaining && progressText.isEmpty()) {
-            // A history rail that cannot say how much is left says nothing
-            // rather than showing a bar with no label.
-            fraction = 0.0;
-        }
-        entry.values.insert(QStringLiteral("progress"), fraction);
-        entry.values.insert(QStringLiteral("progressText"), progressText);
-        entry.values.insert(QStringLiteral("missing"),
-                            object.value(QStringLiteral("integrity_state")).toString()
-                                == QStringLiteral("missing"));
-        entry.values.insert(QStringLiteral("posterUrl"), QVariant());
-        entry.values.insert(QStringLiteral("posterKey"),
-                            object.value(QStringLiteral("poster_key")));
-        m_entries.append(entry);
+        if (value.isObject())
+            m_entries.append(buildEntry(value.toObject(), progress));
     }
     endResetModel();
     emit countChanged();
+}
+
+void MediaListModel::appendItems(const QJsonArray &items)
+{
+    if (items.isEmpty())
+        return;
+    const int first = m_entries.size();
+    m_entries.reserve(first + items.size());
+    beginInsertRows(QModelIndex(), first, first + items.size() - 1);
+    for (const QJsonValue &value : items) {
+        if (value.isObject())
+            m_entries.append(buildEntry(value.toObject(), m_progress));
+    }
+    endInsertRows();
+    emit countChanged();
+}
+
+void MediaListModel::remove(int mediaId)
+{
+    for (int row = 0; row < m_entries.size(); ++row) {
+        if (m_entries.at(row).id != mediaId)
+            continue;
+        beginRemoveRows(QModelIndex(), row, row);
+        m_entries.remove(row);
+        endRemoveRows();
+        emit countChanged();
+        return;
+    }
 }
 
 void MediaListModel::clear()

@@ -1,5 +1,9 @@
 #include "appcontroller.h"
 
+#include <QUrlQuery>
+
+#include <QUrlQuery>
+
 #include "apiclient.h"
 #include "homescreenmodel.h"
 #include "librarymodel.h"
@@ -23,8 +27,31 @@ AppController::AppController(ApiClient *api, QObject *parent)
         m_lastError.clear();
         emit lastErrorChanged();
     });
+    connect(m_api, &ApiClient::baseUrlChanged, this, [this] {
+        // Posters are absolute URLs built from this, so every model has to be
+        // told.  A server switch invalidates them all: the new server has its
+        // own media ids and its own credentials.
+        const QUrl url(m_api->baseUrl());
+        m_home->setBaseUrl(url);
+        m_library->setBaseUrl(url);
+        m_favorites->setBaseUrl(url);
+        m_history->setBaseUrl(url);
+        m_searchResults->setBaseUrl(url);
+        emit baseUrlChanged();
+    });
+
     connect(m_api, &ApiClient::mediaPageLoaded, this, [this](const QJsonObject &payload) {
-        m_library->setItems(payload.value(QStringLiteral("items")).toArray());
+        const QJsonArray items = payload.value(QStringLiteral("items")).toArray();
+        m_libraryTotal = payload.value(QStringLiteral("total")).toInt();
+        m_libraryHasMore = payload.value(QStringLiteral("has_more")).toBool();
+
+        if (m_libraryAppending)
+            m_library->appendItems(items);
+        else
+            m_library->setItems(items);
+
+        m_libraryOffset = m_library->rowCount();
+        emit libraryPageChanged();
         m_library->setLoading(false);
         setBusy(false);
     });
@@ -52,6 +79,34 @@ AppController::AppController(ApiClient *api, QObject *parent)
         setScreen(Detail);
         setBusy(false);
     });
+    connect(m_api, &ApiClient::categoriesLoaded, this,
+            [this](const QJsonObject &payload) {
+        m_filterOptions = payload.toVariantMap();
+        emit filterOptionsChanged();
+    });
+    connect(m_api, &ApiClient::historyCleared, this, [this] {
+        m_history->clear();
+        m_favorites->clear();
+        refresh();
+    });
+    connect(m_api, &ApiClient::historyEntryRemoved, this, [this](int mediaId) {
+        m_history->remove(mediaId);
+        m_favorites->remove(mediaId);
+    });
+    connect(m_api, &ApiClient::categoriesLoaded, this,
+            [this](const QJsonObject &payload) {
+        m_filterOptions = payload.toVariantMap();
+        emit filterOptionsChanged();
+    });
+    connect(m_api, &ApiClient::historyCleared, this, [this] {
+        m_history->clear();
+        m_favorites->clear();
+        refresh();
+    });
+    connect(m_api, &ApiClient::historyEntryRemoved, this, [this](int mediaId) {
+        m_history->remove(mediaId);
+        m_favorites->remove(mediaId);
+    });
     connect(m_api, &ApiClient::favoriteChanged, this,
             [this](int mediaId, bool favorite) {
         m_library->setFavorite(mediaId, favorite);
@@ -71,6 +126,14 @@ AppController::AppController(ApiClient *api, QObject *parent)
         } else if (operation == QLatin1String("library.page")) {
             m_library->setFailed(true, error.message, error.isRetryable());
             m_library->setLoading(false);
+            // The page we asked for never arrived, so the *next* request has to
+            // start from the offset we actually hold rather than from the one
+            // the failed request claimed.
+            m_libraryOffset = m_library->rowCount();
+            // The page we asked for never arrived, so the *next* request has to
+            // start from the offset we actually hold rather than from the one
+            // the failed request claimed.
+            m_libraryOffset = m_library->rowCount();
         } else if (operation == QLatin1String("library.favorites")) {
             m_favorites->setFailed(true, error.message, error.isRetryable());
             m_favorites->setLoading(false);
@@ -103,9 +166,10 @@ void AppController::setScreen(Screen screen)
 {
     if (m_screen == screen)
         return;
-    // Remember where "back" goes from a detail screen.  Everything else is a
-    // top-level destination with no back of its own.
-    if (m_screen != Detail)
+    // Remember where "back" goes.  Everything except the player is a
+    // top-level destination with no back of its own, and the player is a layer
+    // over whatever opened it.
+    if (m_screen != Player)
         m_screenBeforeDetail = m_screen;
     m_screen = screen;
     emit screenChanged();
@@ -133,10 +197,9 @@ void AppController::goHome()
 void AppController::goLibrary()
 {
     setScreen(Library);
-    if (m_library->rowCount() == 0) {
-        m_library->setLoading(true);
-        m_api->loadMediaPage(60, 0);
-    }
+    loadFilterOptions();
+    if (m_library->rowCount() == 0)
+        requestLibraryPage(false);
 }
 
 void AppController::goSearch()
@@ -161,6 +224,102 @@ void AppController::goHistory()
 void AppController::goSettings()
 {
     setScreen(Settings);
+    // The session list changes when a device is revoked from a browser, so it
+    // is fetched on entry rather than cached from sign-in.
+    m_api->loadSessions();
+}
+
+void AppController::requestLibraryPage(bool append)
+{
+    if (!m_libraryHasMore && append)
+        return;   // the end of the list is not a request
+
+    m_libraryAppending = append;
+    m_library->setLoading(true);
+    setBusy(true);
+
+    // The filters go on the query string, because the server is what decides
+    // what "genre=Science Fiction, sorted by year" means -- a client-side
+    // filter would have to download the whole library to apply it.
+    QUrlQuery query;
+    query.addQueryItem(QStringLiteral("limit"), QString::number(kPageSize));
+    query.addQueryItem(QStringLiteral("offset"), QString::number(m_libraryOffset));
+    query.addQueryItem(QStringLiteral("sort"), m_librarySort);
+    if (!m_libraryGenre.isEmpty())
+        query.addQueryItem(QStringLiteral("genre"), m_libraryGenre);
+    if (!m_libraryYear.isEmpty())
+        query.addQueryItem(QStringLiteral("year"), m_libraryYear);
+    m_api->loadMediaPage(query);
+}
+
+void AppController::loadMoreLibrary()
+{
+    if (!m_libraryHasMore || m_library->isLoading())
+        return;
+    requestLibraryPage(true);
+}
+
+void AppController::setLibrarySort(const QString &sort)
+{
+    if (m_librarySort == sort)
+        return;
+    m_librarySort = sort;
+    emit libraryPageChanged();
+    requestLibraryPage(false);
+}
+
+void AppController::setLibraryGenre(const QString &genre)
+{
+    if (m_libraryGenre == genre)
+        return;
+    m_libraryGenre = genre;
+    emit libraryPageChanged();
+    requestLibraryPage(false);
+}
+
+void AppController::setLibraryYear(const QString &year)
+{
+    if (m_libraryYear == year)
+        return;
+    m_libraryYear = year;
+    emit libraryPageChanged();
+    requestLibraryPage(false);
+}
+
+void AppController::clearLibraryFilters()
+{
+    if (m_libraryGenre.isEmpty() && m_libraryYear.isEmpty())
+        return;
+    m_libraryGenre.clear();
+    m_libraryYear.clear();
+    emit libraryPageChanged();
+    requestLibraryPage(false);
+}
+
+void AppController::loadFilterOptions()
+{
+    if (!m_filterOptions.isEmpty())
+        return;
+    m_api->loadCategories();
+}
+
+void AppController::openPlayer(int mediaId)
+{
+    m_playerMediaId = mediaId;
+    setScreen(Player);
+}
+
+void AppController::closePlayer()
+{
+    m_playerMediaId = 0;
+    // Back to whatever opened the player, which is almost always the detail
+    // screen -- the player is a layer over it, not a destination.
+    setScreen(m_screenBeforeDetail == Player ? Home : m_screenBeforeDetail);
+}
+
+QUrl AppController::baseUrl() const
+{
+    return QUrl(m_api->baseUrl());
 }
 
 void AppController::openDetail(int mediaId)
@@ -171,6 +330,10 @@ void AppController::openDetail(int mediaId)
 
 void AppController::back()
 {
+    if (m_screen == Player) {
+        closePlayer();
+        return;
+    }
     if (m_screen == Detail) {
         setScreen(m_screenBeforeDetail);
         return;

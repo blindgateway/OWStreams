@@ -1,0 +1,249 @@
+pragma ComponentBehavior: Bound
+
+import QtQuick
+import QtQuick.Controls
+import QtQuick.Layouts
+import Stream
+
+/// The signed-in shell: navigation plus whatever screen the controller says.
+///
+/// Three arrangements of one tree, not three UIs:
+///
+/// * **desktop**  a fixed sidebar with labels, content beside it;
+/// * **tablet**   a compact icon rail, content beside it;
+/// * **phone**    no sidebar at all -- a bottom bar, content above it.
+///
+/// The screen itself never knows which it is in; it fills whatever space it is
+/// given.  That is what stops the desktop layout being *stretched* onto a
+/// phone, which is the failure this arrangement exists to prevent.
+Item {
+    id: shell
+
+    property var controller: null
+    property var session: null
+
+    signal profileSwitchRequested()
+
+    readonly property bool isPhone: Responsive.isPhone
+
+    readonly property var model: [
+        { key: "home",      icon: "home",      label: qsTr("Home") },
+        { key: "library",   icon: "library",   label: qsTr("Library") },
+        { key: "search",    icon: "search",    label: qsTr("Search") },
+        { key: "favorites", icon: "favorites", label: qsTr("Favourites") },
+        { key: "history",   icon: "history",   label: qsTr("History") },
+        { key: "settings",  icon: "settings",  label: qsTr("Settings") },
+    ]
+
+    function navigate(key) {
+        if (!shell.controller)
+            return
+        switch (key) {
+        case "home":      shell.controller.goHome(); break
+        case "library":   shell.controller.goLibrary(); break
+        case "search":    shell.controller.goSearch(); break
+        case "favorites": shell.controller.goFavorites(); break
+        case "history":   shell.controller.goHistory(); break
+        case "settings":  shell.controller.goSettings(); break
+        default: break
+        }
+    }
+
+    function isCurrent(key) {
+        if (!shell.controller)
+            return false
+        switch (key) {
+        case "home":      return shell.controller.screen === 0
+        case "library":   return shell.controller.screen === 1
+        case "search":    return shell.controller.screen === 2
+        case "favorites": return shell.controller.screen === 3
+        case "history":   return shell.controller.screen === 4
+        case "settings":  return shell.controller.screen === 5
+        default:          return false
+        }
+    }
+
+    // -- sidebar (desktop and tablet) ------------------------------------
+    Rectangle {
+        id: sidebar
+        visible: !shell.isPhone
+        anchors.top: parent.top
+        anchors.left: parent.left
+        anchors.bottom: parent.bottom
+        width: Responsive.railWidth
+        color: Theme.surface
+
+        // A hairline rather than a shadow: a one-pixel edge between two
+        // surfaces is what a desktop app actually uses, and a drop shadow on a
+        // full-height panel is the thing that makes a UI read as a template.
+        Rectangle {
+            anchors.right: parent.right
+            width: 1
+            height: parent.height
+            color: Theme.hairline
+        }
+
+        Text {
+            id: wordmark
+            anchors.top: parent.top
+            anchors.topMargin: Theme.spaceXl
+            anchors.left: parent.left
+            anchors.leftMargin: Theme.spaceLg
+            visible: Responsive.isDesktop
+            text: qsTr("Stream")
+            color: Theme.text
+            font.pixelSize: Theme.typeTitle
+            font.family: Theme.family
+            font.weight: Font.DemiBold
+        }
+
+        Column {
+            id: navColumn
+            anchors.top: Responsive.isDesktop ? wordmark.bottom : parent.top
+            anchors.topMargin: Responsive.isDesktop ? Theme.spaceXl : Theme.spaceLg
+            anchors.left: parent.left
+            anchors.right: parent.right
+            spacing: Theme.spaceXs
+
+            Repeater {
+                model: shell.model
+
+                delegate: NavItem {
+                    required property var modelData
+                    width: navColumn.width
+                    icon: modelData.icon
+                    label: modelData.label
+                    showLabel: Responsive.isDesktop
+                    selected: shell.isCurrent(modelData.key)
+                    onActivated: shell.navigate(modelData.key)
+                }
+            }
+        }
+    }
+
+    // -- content ---------------------------------------------------------
+    Item {
+        id: content
+        anchors.top: parent.top
+        anchors.left: shell.isPhone ? parent.left : sidebar.right
+        anchors.right: parent.right
+        anchors.bottom: shell.isPhone ? bottomBar.top : parent.bottom
+
+        Loader {
+            id: screenLoader
+            anchors.fill: parent
+            active: shell.controller !== null
+            visible: active
+
+            sourceComponent: Component {
+                Loader {
+                    anchors.fill: parent
+                    readonly property var controller: shell.controller
+
+                    HomeScreen {
+                        id: home
+                        anchors.fill: parent
+                        visible: controller.screen === 0
+                        home: controller.home
+                        onTitleActivated: function (id) { controller.openDetail(id) }
+                        onProfileSwitchRequested: shell.profileSwitchRequested()
+                    }
+
+                    MediaGridScreen {
+                        id: library
+                        anchors.fill: parent
+                        visible: controller.screen === 1
+                        model: controller.library
+                        heading: qsTr("Library")
+                        onTitleActivated: function (id) { controller.openDetail(id) }
+                    }
+
+                    SearchScreen {
+                        id: search
+                        anchors.fill: parent
+                        visible: controller.screen === 2
+                        controller: controller
+                        results: controller.searchResults
+                        onTitleActivated: function (id) { controller.openDetail(id) }
+                    }
+
+                    MediaGridScreen {
+                        id: favorites
+                        anchors.fill: parent
+                        visible: controller.screen === 3
+                        model: controller.favorites
+                        heading: qsTr("Favourites")
+                        onTitleActivated: function (id) { controller.openDetail(id) }
+                    }
+
+                    MediaGridScreen {
+                        id: history
+                        anchors.fill: parent
+                        visible: controller.screen === 4
+                        model: controller.history
+                        heading: qsTr("History")
+                        onTitleActivated: function (id) { controller.openDetail(id) }
+                    }
+
+                    SettingsScreen {
+                        id: settings
+                        anchors.fill: parent
+                        visible: controller.screen === 6
+                        session: shell.session
+                        controller: controller
+                    }
+
+                    DetailScreen {
+                        id: detail
+                        anchors.fill: parent
+                        visible: controller.screen === 6 || controller.screen === 7
+                        mediaId: controller.detailMediaId
+                        media: controller.detail
+                        controller: controller
+                        onBackRequested: controller.back()
+                        onPlayRequested: function (id) { controller.openDetail(id) }
+                    }
+                }
+            }
+        }
+    }
+
+    // -- bottom bar (phone) -----------------------------------------------
+    Rectangle {
+        id: bottomBar
+        visible: shell.isPhone
+        anchors.left: parent.left
+        anchors.right: parent.right
+        anchors.bottom: parent.bottom
+        height: 58 + (Screen.desktopAvailableHeight > 0 ? 0 : 0)
+        color: Theme.surface
+
+        Rectangle {
+            anchors.top: parent.top
+            width: parent.width
+            height: 1
+            color: Theme.hairline
+        }
+
+        Row {
+            anchors.fill: parent
+            anchors.leftMargin: Theme.spaceXs
+            anchors.rightMargin: Theme.spaceXs
+
+            Repeater {
+                model: shell.model
+
+                delegate: NavItem {
+                    required property var modelData
+                    width: bottomBar.width / 6
+                    height: bottomBar.height
+                    icon: modelData.icon
+                    label: modelData.label
+                    showLabel: false
+                    selected: shell.isCurrent(modelData.key)
+                    onActivated: shell.navigate(modelData.key)
+                }
+            }
+        }
+    }
+}

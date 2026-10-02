@@ -3,6 +3,8 @@
 #include <QJsonArray>
 #include <QJsonObject>
 #include <QObject>
+#include <QUrl>
+#include <QVariantList>
 #include <QVector>
 
 #include "librarymodel.h"
@@ -20,6 +22,10 @@ class HomeRail : public QObject
     Q_PROPERTY(QString title READ title CONSTANT)
     Q_PROPERTY(bool visible READ isVisible NOTIFY visibilityChanged)
     Q_PROPERTY(bool hasContent READ hasContent NOTIFY contentChanged)
+    /// Why this rail wants retrying: the screen offers a retry button only
+    /// when something could come back.  A 404 or a 403 will be exactly as true
+    /// in thirty seconds as it is now.
+    Q_PROPERTY(bool retryable READ isRetryable NOTIFY contentChanged)
 
 public:
     HomeRail(QString title, QString emptyMessage, QObject *parent = nullptr);
@@ -28,6 +34,12 @@ public:
     QString title() const { return m_title; }
     bool isVisible() const;
     bool hasContent() const;
+    /// The rail's own failure text.  `HomeScreenModel::fail` clears every
+    /// rail's message when the *whole* request failed, so this is empty unless
+    /// one rail in particular is the problem -- and with the endpoint shape it
+    /// has, there is no such case, which is why retrying is all there is to do.
+    QString errorMessage() const;
+    bool isRetryable() const { return m_model->isRetryable(); }
 
     /// Feed the rail its items.  `progressMode` is the rail's own: Continue
     /// Watching and Recently Watched carry progress, the rest do not.
@@ -68,6 +80,10 @@ class HomeScreenModel : public QObject
     Q_PROPERTY(QString errorMessage READ errorMessage NOTIFY failedChanged)
     Q_PROPERTY(bool retryable READ isRetryable NOTIFY failedChanged)
     Q_PROPERTY(int genreCount READ genreCount NOTIFY contentChanged)
+    Q_PROPERTY(QUrl baseUrl READ baseUrl WRITE setBaseUrl NOTIFY baseUrlChanged)
+    /// Genre shortcuts from the same payload as the rails.  A list rather than
+    /// a model because it is a dozen entries read once and never re-sorted.
+    Q_PROPERTY(QVariantList genres READ genres NOTIFY contentChanged)
 
 public:
     explicit HomeScreenModel(QObject *parent = nullptr);
@@ -85,6 +101,12 @@ public:
     QString errorMessage() const { return m_errorMessage; }
     bool isRetryable() const { return m_retryable; }
     int genreCount() const { return m_genreCount; }
+    QVariantList genres() const { return m_genres; }
+
+    QUrl baseUrl() const { return m_baseUrl; }
+    /// Propagated to every rail's model.  Posters are absolute URLs built from
+    /// the base, so a model filled before the server was known holds none.
+    void setBaseUrl(const QUrl &url);
 
     QList<HomeRail *> rails() const;
 
@@ -96,6 +118,7 @@ signals:
     void loadingChanged();
     void failedChanged();
     void contentChanged();
+    void baseUrlChanged();
 
 private:
     void dispatch(const QString &key, HomeRail *rail,
@@ -113,5 +136,7 @@ private:
     bool m_retryable = false;
     QString m_errorMessage;
     int m_genreCount = 0;
+    QVariantList m_genres;
+    QUrl m_baseUrl;
     QJsonObject m_payload;
 };

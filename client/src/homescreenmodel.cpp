@@ -22,6 +22,11 @@ bool HomeRail::hasContent() const
     return m_model->rowCount() > 0;
 }
 
+QString HomeRail::errorMessage() const
+{
+    return m_model->errorMessage();
+}
+
 void HomeRail::setItems(const QJsonArray &items, MediaListModel::ProgressMode mode)
 {
     m_model->setLoading(false);
@@ -69,6 +74,15 @@ HomeScreenModel::HomeScreenModel(QObject *parent) : QObject(parent)
                                      tr("Nothing watched yet"), this);
 }
 
+void HomeScreenModel::setBaseUrl(const QUrl &url)
+{
+    if (m_baseUrl == url)
+        return;
+    m_baseUrl = url;
+    for (HomeRail *rail : rails())
+        rail->model()->setBaseUrl(url);
+}
+
 QList<HomeRail *> HomeScreenModel::rails() const
 {
     return {m_continueWatching, m_recentlyAdded, m_recommended, m_favorites,
@@ -112,7 +126,12 @@ void HomeScreenModel::accept(const QJsonObject &payload)
     dispatch(QStringLiteral("recently_watched"), m_recentlyWatched,
              MediaListModel::ProgressMode::Remaining);
 
-    m_genreCount = payload.value(QStringLiteral("categories")).toArray().size();
+    // Categories come back with the rails, so the home screen gets its genre
+    // shortcuts from the same request rather than a second one for a list that
+    // changes when the library does.
+    m_genres = payload.value(QStringLiteral("categories"))
+                   .toArray().toVariantList();
+    m_genreCount = m_genres.size();
 
     emit loadingChanged();
     emit failedChanged();

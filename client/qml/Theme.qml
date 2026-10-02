@@ -22,7 +22,27 @@ QtObject {
     readonly property int spaceHuge: 48
 
     // -- type ---------------------------------------------------------------
-    readonly property string family: Qt.application.font.family
+    /// The platform's default UI face.
+    ///
+    /// Resolved once, from the window, rather than from `Qt.application.font`
+    /// -- which is not a resolvable property as far as the linter (and, on
+    /// some builds, at runtime) is concerned.  Naming it once here means a
+    /// screen never hard-codes a family, and a font change is a change to this
+    /// file.
+    readonly property string family: defaultFamily
+
+    /// Overridden by Main.qml with the window's font, the moment the window
+    /// exists.  A `Text` element reports a real family there; the singleton
+    /// itself has no window to ask.
+    property string defaultFamily: "sans-serif"
+
+    /// Read by Main on startup and assigned here.  Kept as a separate property
+    /// so the assignment reads as what it is rather than as a font choice made
+    /// inside a style sheet.
+    function adoptWindowFont(window) {
+        if (window && window.font && window.font.family)
+            defaultFamily = window.font.family
+    }
     readonly property int typeDisplay: 34
     readonly property int typeTitle: 22
     readonly property int typeBody: 15

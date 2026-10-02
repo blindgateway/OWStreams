@@ -1,10 +1,14 @@
 #include <QGuiApplication>
 #include <QQmlApplicationEngine>
+#include <QtQml>
+#include <QtQml>
 #include <QQmlContext>
 
 #include "apiclient.h"
 #include "appcontroller.h"
 #include "credentialstore.h"
+#include "homescreenmodel.h"
+#include "librarymodel.h"
 #include "sessioncontroller.h"
 
 /// Entry point.
@@ -14,6 +18,23 @@
 /// be built by a test without a QGuiApplication.
 int main(int argc, char *argv[])
 {
+    // The controller types are registered *uncreatable*: QML may name their
+    // enums (`AppController.Detail`, `SessionController.Home`) but must not
+    // construct one.  A navigation model that a screen could instantiate a
+    // second copy of is a model with two sources of truth.
+    qmlRegisterUncreatableType<AppController>(
+        "Stream", 1, 0, "AppController",
+        QStringLiteral("Provided by main(); not constructible from QML."));
+    qmlRegisterUncreatableType<SessionController>(
+        "Stream", 1, 0, "SessionController",
+        QStringLiteral("Provided by main(); not constructible from QML."));
+    qmlRegisterUncreatableType<MediaListModel>(
+        "Stream", 1, 0, "MediaListModel",
+        QStringLiteral("Provided by AppController; not constructible from QML."));
+    qmlRegisterUncreatableType<HomeScreenModel>(
+        "Stream", 1, 0, "HomeScreenModel",
+        QStringLiteral("Provided by AppController; not constructible from QML."));
+
     QGuiApplication app(argc, argv);
     app.setOrganizationName(QStringLiteral("Stream"));
     app.setApplicationName(QStringLiteral("Stream"));

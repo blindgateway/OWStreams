@@ -18,6 +18,8 @@ qt_add_executable(stream-client
     src/apierror.h
     src/credentialstore.cpp
     src/credentialstore.h
+    src/credentialaccessmanager.cpp
+    src/credentialaccessmanager.h
     src/sessioncontroller.cpp
     src/sessioncontroller.h
     src/librarymodel.cpp
@@ -50,6 +52,8 @@ qt_add_qml_module(stream-client
         qml/ui/Responsive.qml
         qml/ui/AppButton.qml
         qml/ui/AppTextField.qml
+        qml/ui/Icon.qml
+        qml/ui/NavItem.qml
         qml/ui/PosterCard.qml
         qml/ui/PosterRail.qml
         qml/ui/StatusPane.qml
@@ -57,6 +61,8 @@ qt_add_qml_module(stream-client
         qml/screens/LoginScreen.qml
         qml/screens/ProfileScreen.qml
         qml/screens/HomeScreen.qml
+        qml/screens/MediaGridScreen.qml
+        qml/screens/SearchScreen.qml
 )
 
 target_include_directories(stream-client PRIVATE src)

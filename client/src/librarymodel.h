@@ -4,6 +4,7 @@
 #include <QJsonArray>
 #include <QJsonObject>
 #include <QObject>
+#include <QUrl>
 #include <QVariantMap>
 #include <QVector>
 
@@ -26,6 +27,12 @@ class MediaListModel : public QAbstractListModel
     Q_PROPERTY(bool retryable READ isRetryable NOTIFY failedChanged)
     Q_PROPERTY(QString emptyMessage READ emptyMessage WRITE setEmptyMessage
                    NOTIFY emptyMessageChanged)
+    /// Where a row's poster lives.  Absolute, because the poster route is
+    /// authenticated and an `Image` cannot send a header -- the access manager
+    /// on the ApiClient attaches the token.  `setBaseUrl` is how that manager
+    /// is told which server it belongs to, and setting it must repaint the
+    /// rows: a model filled before the server was known holds relative URLs.
+    Q_PROPERTY(QUrl baseUrl READ baseUrl WRITE setBaseUrl NOTIFY baseUrlChanged)
 
 public:
     enum Roles {
@@ -65,12 +72,24 @@ public:
     QString emptyMessage() const { return m_emptyMessage; }
     void setEmptyMessage(const QString &message);
 
+    QUrl baseUrl() const { return m_baseUrl; }
+    void setBaseUrl(const QUrl &url);
+    /// Build the absolute poster URL for `mediaId`, or an empty URL when the
+    /// row carries no poster key -- so an `Image` is never pointed at a route
+    /// that is guaranteed to 404.
+    QUrl posterUrlFor(int mediaId) const;
+
     /// Replace the contents.  `role` decides what the progress bar shows:
     /// a browse rail has no progress, a Continue Watching rail is mostly
     /// progress, and a history rail is sorted by it.
     enum class ProgressMode { None, Fraction, Remaining };
 
     void setItems(const QJsonArray &items, ProgressMode progress = ProgressMode::None);
+    /// Add to the end without resetting.  A `beginResetModel` on every page
+    /// would empty a thousand-poster grid for the length of a request.
+    void appendItems(const QJsonArray &items);
+    /// Drop one row, for an entry the server has just removed.
+    void remove(int mediaId);
     void clear();
     /// Flip one title's favourite flag without refetching the rail.
     void setFavorite(int mediaId, bool favorite);
@@ -87,6 +106,7 @@ signals:
     void loadingChanged();
     void failedChanged();
     void emptyMessageChanged();
+    void baseUrlChanged();
 
 private:
     struct Entry {
@@ -95,10 +115,17 @@ private:
         ProgressMode progress = ProgressMode::None;
     };
 
+    /// Turn one server row into a delegate-ready entry.  Shared by `setItems`
+    /// and `appendItems` so a page-two poster cannot disagree with a page-one
+    /// one about its subtitle or its progress bar.
+    Entry buildEntry(const QJsonObject &object, ProgressMode progress) const;
+
     QVector<Entry> m_entries;
     bool m_loading = false;
     bool m_failed = false;
     bool m_retryable = false;
     QString m_errorMessage;
     QString m_emptyMessage;
+    QUrl m_baseUrl;
+    ProgressMode m_progress = ProgressMode::None;
 };

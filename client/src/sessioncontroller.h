@@ -69,6 +69,11 @@ public:
     void selectProfile(int profileId);
     void unlockProfile(int profileId, const QString &pin);
 
+    /// Back to the profile picker, keeping the session.  "Switch profile" is a
+    /// navigation, not a sign-out: signing out would throw away a remembered
+    /// login because somebody picked a different profile.
+    void showProfiles();
+
     /// Called once at startup: restore the remembered server and session.
     void restore();
 

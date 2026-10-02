@@ -1,5 +1,9 @@
 // The session state machine.
 //
+// Deliberately QTEST_GUILESS: nothing here touches Qt Quick, and a GUI
+// application aborts outright on a headless build machine, which is how this
+// suite came to be reported as "Subprocess aborted" rather than as a failure.
+//
 // This is the file that decides whether a user sees the connection screen, the
 // login screen, or their library -- so its transitions are tested here rather
 // than discovered on a device.  Everything below drives the real controller
@@ -486,5 +490,5 @@ private slots:
     }
 };
 
-QTEST_MAIN(SessionControllerTest)
+QTEST_GUILESS_MAIN(SessionControllerTest)
 #include "tst_sessioncontroller.moc"

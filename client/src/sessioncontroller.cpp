@@ -170,6 +170,15 @@ void SessionController::unlockProfile(int profileId, const QString &pin)
     m_api->unlockProfile(profileId, pin);
 }
 
+void SessionController::showProfiles()
+{
+    // Forget the profile selection so the picker opens on a decision rather
+    // than on the profile that was already in use.
+    m_api->setProfileId(0);
+    setState(Profiles);
+    emit profilesChanged();
+}
+
 void SessionController::persistSession(const QString &access, const QString &refresh,
                                        int expiresInSeconds)
 {
