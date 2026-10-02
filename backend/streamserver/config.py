@@ -328,7 +328,9 @@ def _validate(config: Config) -> None:
     if config.media.stream_chunk_size < 64 * 1024:
         raise ConfigError("media.stream_chunk_size must be at least 64 KiB")
     for path in config.storage.data_dir, config.database_file, config.image_path:
-        if not path.is_absolute():
+        # database_path and image_dir default to None, which means "derive
+        # from data_dir"; an explicit relative value is still a mistake.
+        if path is not None and not path.is_absolute():
             raise ConfigError(f"storage paths must be absolute: {path}")
     if config.server.host and not _is_valid_host(config.server.host):
         raise ConfigError(f"server.host is not a valid address or hostname: {config.server.host!r}")

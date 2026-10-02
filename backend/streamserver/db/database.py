@@ -199,12 +199,22 @@ class Database:
         self.execute("PRAGMA optimize")
 
     def vacuum(self) -> None:
-        self.execute("VACUUM")
+        """Compact the file.  Like the checkpoint, VACUUM cannot run inside a
+        transaction, so it takes the write lock directly."""
+        with self._write_lock:
+            self.connection().execute("VACUUM")
 
     def wal_checkpoint(self, mode: str = "TRUNCATE") -> None:
+        """Fold the write-ahead log back into the database file.
+
+        Not wrapped in :meth:`write`: a checkpoint needs to *close* the
+        transaction, so running it inside ``BEGIN IMMEDIATE`` would raise
+        "database table is locked".  It takes the write lock itself.
+        """
         if mode not in {"PASSIVE", "FULL", "RESTORE", "TRUNCATE"}:
             raise ValueError(f"invalid checkpoint mode: {mode!r}")
-        self.execute(f"PRAGMA wal_checkpoint({mode})")
+        with self._write_lock:
+            self.connection().execute(f"PRAGMA wal_checkpoint({mode})")
 
     def table_counts(self) -> dict[str, int]:
         names = [
@@ -294,6 +304,12 @@ def migrate(db: Database, migrations: list[tuple[int, str, str]]) -> int:
     mid-migration leaves the database on the previous version rather than in a
     half-applied state.
     """
+    # The journal mode is set explicitly *before* the first write.  On a
+    # brand-new file there is no journal to switch, and letting SQLite pick
+    # its default (DELETE) then trying to change it later silently does
+    # nothing -- which would leave the server running without WAL.
+    db.connection().execute("PRAGMA journal_mode = WAL")
+
     db.connection().execute(_MIGRATION_TABLE)
     current = db.user_version()
 
@@ -340,53 +356,75 @@ def backup(db: Database, destination: Path, *, compress: bool = True) -> Path:
 
 
 def verify_integrity(database_file: Path) -> tuple[bool, str]:
-    """Open a (possibly backup) database read-only and check it."""
-    conn = sqlite3.connect(f"file:{database_file}?mode=ro", uri=True)
+    """Open a (possibly backup) database read-only and check it.
+
+    A file whose header is not a database raises ``DatabaseError`` from the
+    connect rather than returning ``False``; that is caught here so both entry
+    points report the same "not ok" instead of one of them blowing up.
+    """
+    try:
+        conn = sqlite3.connect(f"file:{database_file}?mode=ro", uri=True)
+    except sqlite3.DatabaseError as exc:
+        return False, f"not a database file: {exc}"
     try:
         rows = conn.execute("PRAGMA integrity_check(20)").fetchall()
         detail = "; ".join(str(r[0]) for r in rows)
         return bool(rows) and rows[0][0] == "ok", detail
+    except sqlite3.DatabaseError as exc:
+        return False, str(exc)
     finally:
         conn.close()
 
 
-def restore(backup_file: Path, destination: Path, *, force: bool = False) -> None:
-    """Replace the live database with a backup, atomically."""
+def restore(backup_file: Path, destination: Path, *, force: bool = False,
+            close_existing: "Database | None" = None) -> None:
+    """Replace the live database with a backup, atomically.
+
+    Pass ``close_existing`` when the caller already holds an open
+    :class:`Database` on ``destination``.  Its handles must be closed before the
+    swap: an open descriptor keeps the *old* inode alive, so a caller that
+    skips this would carry on reading and writing a file that is no longer
+    reachable by any path -- silently divergent from the restored data.
+
+    ``os.replace`` then makes the swap atomic: it either happens completely or
+    not at all.  The ``-wal``/``-shm`` sidecars of the old file are removed,
+    because leaving them behind would let SQLite graft stale pages onto the
+    restored database.
+    """
     if not backup_file.exists():
         raise DatabaseError(f"backup not found: {backup_file}")
     if destination.exists() and not force:
         raise DatabaseError(
             f"{destination} exists; pass force=True to overwrite (a .bak copy is kept)"
         )
-    if backup_file.suffix == ".gz":
-        import gzip
 
-        with gzip.open(backup_file, "rb") as src:
-            conn = sqlite3.connect(str(destination))
-            try:
-                src.seek(0)
-                conn.executescript("")  # ensure the file is created
-                import sqlite3 as _sqlite3
+    if close_existing is not None:
+        close_existing.close()
 
-                _sqlite3.Connection.backup  # sanity: attribute exists
-                dst = conn.cursor()
-                dst.executescript("")
-                # Restore by loading the compressed dump into a fresh file.
-                conn.close()
-                staging = destination.with_suffix(".restoring")
-                with open(staging, "wb") as raw:
-                    shutil.copyfileobj(src, raw, length=1024 * 1024)
-                _replace(staging, destination)
-            finally:
-                pass
-    else:
-        staging = destination.with_suffix(".restoring")
-        shutil.copyfile(backup_file, staging)
+    staging = destination.with_suffix(destination.suffix + ".restoring")
+    try:
+        if backup_file.suffix == ".gz":
+            import gzip
+
+            with gzip.open(backup_file, "rb") as src, open(staging, "wb") as raw:
+                shutil.copyfileobj(src, raw, length=1024 * 1024)
+        else:
+            shutil.copyfile(backup_file, staging)
+
         ok, detail = verify_integrity(staging)
         if not ok:
-            staging.unlink(missing_ok=True)
             raise DatabaseError(f"backup failed integrity check: {detail}")
+
         _replace(staging, destination)
+    finally:
+        if staging.exists():
+            staging.unlink()
+
+    for suffix in ("-wal", "-shm"):
+        sidecar = Path(str(destination) + suffix)
+        if sidecar.exists():
+            sidecar.unlink()
+
     os.chmod(destination, 0o600)
 
 

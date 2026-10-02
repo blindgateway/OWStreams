@@ -37,9 +37,11 @@ DEFAULT_P = 1
 DEFAULT_SALT_BYTES = 16
 DEFAULT_KEY_BYTES = 32
 
-#: Bounded so a hostile or corrupted stored hash cannot ask for n=2**30 and
-#: wedge the server.  Anything above this is treated as a decode failure.
-_MAX_N = 2 ** 20
+#: Bound on the work factor a *stored* hash may demand.  A row corrupted or
+#: tampered with to ask for n=2**20 would cost ~1 GiB and ~1 s per login; this
+#: ceiling keeps the worst case inside the 128 MiB budget the KDF is given, so
+#: a corrupt row is rejected rather than being allowed to exhaust the box.
+_MAX_N = 2 ** 17
 
 _SCHEME_RE = re.compile(
     r"^scrypt\$(?P<n>\d+)\$(?P<r>\d+)\$(?P<p>\d+)\$(?P<salt>[A-Za-z0-9+/=]+)\$(?P<key>[A-Za-z0-9+/=]+)$"
@@ -233,9 +235,18 @@ def _is_sequential(pin: str) -> bool:
     return ascending or descending
 
 
+#: Excludes I, l, 1, O, 0 and their look-alikes: a generated password gets
+#: read off a terminal and typed by hand, and an ambiguous glyph turns that
+#: into a support call.
+_PASSWORD_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789"
+_AMBIGUOUS = set("Il1O0o")
+
+
 def random_password(length: int = 20) -> str:
-    """Generate an admin password / invite code with no ambiguous characters."""
-    alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789"
+    """Generate an admin password or invite code with no ambiguous characters."""
+    alphabet = "".join(c for c in _PASSWORD_ALPHABET if c not in _AMBIGUOUS)
+    if length < 8:
+        raise ValueError("generated passwords must be at least 8 characters")
     return "".join(secrets.choice(alphabet) for _ in range(length))
 
 

@@ -25,7 +25,10 @@ include = ["streamserver*"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 python_files = ["test_*.py"]
-addopts = "-ra --strict-markers"
+# -p no:xvfb: this project's tests never open a window, and the globally
+#   installed pytest-xvfb plugin otherwise blocks for 30s trying to start a
+#   virtual display that the sandbox cannot provide.
+addopts = "-ra --strict-markers -p no:xvfb"
 markers = [
     "slow: tests that take more than a second",
     "network: tests that bind a socket",

@@ -303,12 +303,17 @@ def cmd_restore(args) -> int:
     from .db.database import restore as restore_db
 
     config = _load(args)
-    if Database(config.database_file).connection().execute(
-        "SELECT 1 FROM users LIMIT 1"
-    ).fetchone():
-        if not args.force:
-            _die("the database has data in it; pass --force to replace it")
-    restore_db(Path(args.backup), config.database_file, force=True)
+    existing = Database(config.database_file)
+    try:
+        if existing.connection().execute("SELECT 1 FROM users LIMIT 1").fetchone():
+            if not args.force:
+                _die("the database has data in it; pass --force to replace it")
+        # restore() closes this handle: an open descriptor would otherwise keep
+        # the old file alive and the process would carry on using it.
+        restore_db(Path(args.backup), config.database_file, force=True,
+                   close_existing=existing)
+    finally:
+        existing.close()
     ok, detail = verify_integrity(config.database_file)
     print(f"Restored {args.backup} -> {config.database_file}")
     print(f"  integrity: {'ok' if ok else detail}")
