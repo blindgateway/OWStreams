@@ -62,6 +62,7 @@ client/tests/
 ├── tst_appcontroller.cpp        navigation and per-screen loading
 ├── tst_playbackcontroller.cpp   the player's rules and its progress throttle
 ├── tst_captureguard.cpp         that the guard reports only what it applied
+├── tst_timetext.cpp             that the two languages agree on a runtime
 └── e2e/                         harness.py, ServerFixture: the real server
 ```
 

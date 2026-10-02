@@ -50,9 +50,9 @@ set(STREAM_MODEL_SOURCES
 )
 
 foreach(suite credentialaccess credentialstore apierror apiclient librarymodel
-             appcontroller playbackcontroller sessioncontroller captureguard)
+             appcontroller playbackcontroller sessioncontroller captureguard timetext)
     if(suite STREQUAL "librarymodel" OR suite STREQUAL "appcontroller"
-       OR suite STREQUAL "playbackcontroller")
+       OR suite STREQUAL "playbackcontroller" OR suite STREQUAL "timetext")
         set(suite_sources ${STREAM_MODEL_SOURCES})
     else()
         set(suite_sources ${STREAM_CLIENT_SOURCES})

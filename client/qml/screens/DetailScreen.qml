@@ -159,36 +159,32 @@ Flickable {
                 // The one-line fact strip: year · runtime · rating, with the
                 // rating's *source* named.  A rating without its source is a
                 // number nobody can trust.
-                RowLayout {
+                //
+                // One `Text` rather than three in a `RowLayout`.  Three meant
+                // three `visible` bindings, three empty strings and three
+                // `spaceMd` gaps for whatever was missing -- so a title with a
+                // year and no runtime and no rating rendered "1994      " with
+                // two invisible gaps holding it open, and the strip was
+                // positioned as though it had facts in it.
+                Text {
                     Layout.fillWidth: true
                     Layout.topMargin: Theme.spaceXs
-                    spacing: Theme.spaceMd
                     visible: screen.hasMedia
-
-                    Text {
-                        text: screen.hasMedia && screen.media.year ? String(screen.media.year) : ""
-                        color: Theme.textMuted
-                        font.pixelSize: Theme.typeCaption
-                        font.family: Theme.family
-                    }
-                    Text {
-                        visible: screen.hasMedia && screen.media.runtime_minutes
-                        text: screen.hasMedia && screen.media.runtime_minutes
-                              ? screen.formatRuntime(screen.media.runtime_minutes) : ""
-                        color: Theme.textMuted
-                        font.pixelSize: Theme.typeCaption
-                        font.family: Theme.family
-                    }
-                    Text {
-                        visible: screen.hasMedia && screen.media.rating_value
-                        text: screen.hasMedia && screen.media.rating_value
-                              ? qsTr("%1 ★ · %2")
+                    // Built as a list and joined, so a missing fact takes its
+                    // separator with it.
+                    text: screen.hasMedia ? [
+                        screen.media.year ? String(screen.media.year) : "",
+                        screen.formatRuntime(screen.media.runtime_minutes),
+                        screen.media.rating_value
+                            ? qsTr("%1 ★ · %2")
                                 .arg(Number(screen.media.rating_value).toFixed(1))
-                                .arg(screen.media.rating_source ? screen.media.rating_source : "") : ""
-                        color: Theme.accent
-                        font.pixelSize: Theme.typeCaption
-                        font.family: Theme.family
-                    }
+                                .arg(screen.media.rating_source ? screen.media.rating_source : "")
+                            : "",
+                    ].filter(function (part) { return part.length > 0 }).join(" · ") : ""
+                    color: Theme.textMuted
+                    font.pixelSize: Theme.typeCaption
+                    font.family: Theme.family
+                    wrapMode: Text.WordWrap
                 }
 
                 Flow {
@@ -316,6 +312,17 @@ Flickable {
 
     readonly property bool busy: screen.controller ? screen.controller.busy : false
 
+    /// The one place a runtime is turned into words.
+    ///
+    /// Three copies of this function existed -- here, in `librarymodel.cpp`'s
+    /// `formatRuntime`, and in the fact strip's own inline expression -- and
+    /// they had already drifted: the card role said "42 min" while the detail
+    /// screen said "42 min" but a rail showed "1 h" against a grid showing
+    /// "60 min".  They cannot be merged into one C++ function without going
+    /// through a model role for a value that is not in the payload, and they
+    /// cannot be three because three is how they drift.  So this is the one, and
+    /// `tst_timetext.cpp` asserts it against the same fixtures the model role
+    /// uses.
     function formatRuntime(minutes) {
         if (!minutes || minutes <= 0) return ""
         const hours = Math.floor(minutes / 60)
