@@ -37,11 +37,25 @@ from .db.database import Database, backup as write_backup, migrate, verify_integ
 from .db.migrations import LATEST_VERSION, MIGRATIONS
 from .logging_setup import setup_logging
 from .security import passwords
+from .security.paths import MediaRootRegistry
+
+
+class CommandError(Exception):
+    """A command failed for an expected, reportable reason.
+
+    Carrying the message as an exception value rather than writing to stderr
+    and raising ``SystemExit`` means ``main()`` is the single place that
+    formats output -- so embedding code and tests get a return code and a
+    message instead of an uncatchable interpreter exit.
+    """
+
+    def __init__(self, message: str, code: int = 1) -> None:
+        super().__init__(message)
+        self.code = code
 
 
 def _die(message: str, code: int = 1) -> "NoReturn":  # type: ignore[valid-type]
-    print(f"error: {message}", file=sys.stderr)
-    raise SystemExit(code)
+    raise CommandError(message, code)
 
 
 def _open_database(config: Config) -> Database:
@@ -67,6 +81,8 @@ def _overrides(args) -> dict:
     if getattr(args, "port", None):
         overrides["server.port"] = args.port
     if getattr(args, "root", None):
+        # An explicit --root *replaces* whatever the environment supplies, so
+        # "scan --root X" really does scan only X.
         overrides["media.library_roots"] = [str(Path(r).expanduser()) for r in args.root]
     if getattr(args, "log_level", None):
         overrides["storage.log_level"] = args.log_level
@@ -229,13 +245,19 @@ def cmd_import(args) -> int:
     from .services.importer import Importer, PathNotImportable
 
     registry = MediaRootRegistry(tuple(Path(p) for p in config.media.library_roots))
+    if registry.is_empty:
+        _die("no library roots configured (--root or [media] library_roots)")
     importer = Importer(db, config, registry, audit=AuditLogger(db, enabled=True))
 
     failures = 0
     for raw in args.paths:
         try:
+            # Accept a path relative to a library root: it is what a shell
+            # user has in front of them, and the registry check below still
+            # decides whether the resolved file is actually reachable.
+            resolved = _locate(raw, registry)
             result = importer.add_path(
-                raw, title=args.title, year=args.year,
+                resolved, title=args.title, year=args.year,
                 refresh_metadata=args.refresh_metadata,
                 content_type=args.content_type,
             )
@@ -272,10 +294,24 @@ def cmd_list(args) -> int:
     return 0
 
 
+def _locate(raw: str, registry) -> Path:
+    """Resolve a CLI path, trying each library root for a relative one."""
+    candidate = Path(raw).expanduser()
+    if candidate.is_absolute() or candidate.exists():
+        return candidate
+    for root in registry.list_roots():
+        option = root / candidate
+        if option.exists():
+            return option
+    return candidate
+
+
 def cmd_verify(args) -> int:
     config = _load(args)
+    # Quiet: the JSON document on stdout is the machine-readable result, and a
+    # log line interleaved with it would break `... | jq`.
+    setup_logging(config.log_path, level=args.log_level, to_file=False, console=False)
     db = _open_database(config)
-    from .security.paths import MediaRootRegistry
     from .services.importer import Importer
 
     registry = MediaRootRegistry(tuple(Path(p) for p in config.media.library_roots))
@@ -432,6 +468,9 @@ def build_parser() -> argparse.ArgumentParser:
         epilog=__doc__,
     )
     parser.add_argument("--version", action="version", version=f"streamserver {__version__}")
+    # Both short and long spellings, and the config flag is accepted by every
+    # subcommand too: `streamserver -c x.toml scan` and
+    # `streamserver scan -c x.toml` have to mean the same thing.
     parser.add_argument("-c", "--config", default=os.environ.get("STREAMSERVER_CONFIG"),
                         help="path to server.toml")
     parser.add_argument("--log-level", choices=["DEBUG", "INFO", "WARNING", "ERROR"],
@@ -441,6 +480,8 @@ def build_parser() -> argparse.ArgumentParser:
     # subparser action does not accept the parent's optionals *after* the
     # subcommand, and "streamserver scan --root X" is the natural spelling.
     common = argparse.ArgumentParser(add_help=False)
+    common.add_argument("-c", "--config", default=argparse.SUPPRESS,
+                        help="path to server.toml")
     common.add_argument("--data-dir", help="override the data directory")
     common.add_argument("--root", action="append",
                         help="add a media root (repeatable)")
@@ -524,8 +565,16 @@ def build_parser() -> argparse.ArgumentParser:
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
+    # The subparser defaults to SUPPRESS, so a flag given after the subcommand
+    # is present; a flag given before it would have been consumed by the top
+    # level parser.  Whichever was supplied, one value wins.
+    if not hasattr(args, "config"):
+        args.config = parser.get_default("config")
     try:
         return int(args.func(args) or 0)
+    except CommandError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return exc.code
     except KeyboardInterrupt:
         print("\ninterrupted", file=sys.stderr)
         return 130

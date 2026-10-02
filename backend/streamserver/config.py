@@ -166,6 +166,9 @@ class Config:
     source_path: Path | None = None
 
     # -- derived paths ----------------------------------------------------
+    # Each optional override *defaults to None*, meaning "derive it from
+    # data_dir".  The ``or`` matters: a relative value in an override would
+    # otherwise be returned verbatim, and validation has just rejected those.
     @property
     def database_file(self) -> Path:
         return self.storage.database_path or (self.storage.data_dir / "streamserver.db")
@@ -181,6 +184,11 @@ class Config:
     @property
     def backup_path(self) -> Path:
         return self.storage.backup_dir or (self.storage.data_dir / "backups")
+
+    @property
+    def data_root(self) -> Path:
+        """The data directory itself, validated."""
+        return Path(self.storage.data_dir)
 
     def ensure_directories(self) -> None:
         for path in (
@@ -382,7 +390,14 @@ def load_config(
 
 
 def dump_config(config: Config) -> str:
-    """Render a config back to TOML -- used by ``streamserver config --init``."""
+    """Render a config back to TOML -- used by ``streamserver init-config``.
+
+    Optional paths that were never set are omitted rather than written as
+    ``""``: a reader must be able to tell "not configured" from "configured as
+    an empty path", and the derived-path properties rely on that distinction.
+    Every scalar is quoted, which is valid TOML for integers, floats and
+    booleans too and keeps a hand-edited file uniform.
+    """
     lines: list[str] = []
     for section_name in _SECTIONS:
         section = getattr(config, section_name)
@@ -390,11 +405,15 @@ def dump_config(config: Config) -> str:
         for f in fields(section):
             value = getattr(section, f.name)
             if isinstance(value, Path):
+                if value is None:
+                    continue
                 rendered = f'"{value}"'
             elif isinstance(value, bool):
                 rendered = "true" if value else "false"
             elif isinstance(value, list):
                 rendered = "[" + ", ".join(f'"{v}"' for v in value) + "]"
+            elif value is None:
+                continue
             else:
                 rendered = f'"{value}"'
             lines.append(f"{f.name} = {rendered}")

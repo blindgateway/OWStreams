@@ -541,8 +541,19 @@ def _safe_resolve(registry: MediaRootRegistry, path: Path) -> bool:
 
 
 def resolve_and_stat(path: Path, registry: MediaRootRegistry) -> tuple[Path, int]:
+    """Resolve a stored media path and stat it.
+
+    Both steps can fail for a file that has been deleted since import, and
+    both failures mean the same thing to the caller -- the row is stale.  They
+    are translated to :class:`PathViolation` so the integrity checker has one
+    error to catch; raising ``FileNotFoundError`` out of the ``stat`` would
+    abort the whole verification run on the first missing file.
+    """
     resolved = registry.resolve(path)
-    return resolved, resolved.stat().st_size
+    try:
+        return resolved, resolved.stat().st_size
+    except OSError as exc:
+        raise PathViolation(f"cannot stat media file: {exc}") from exc
 
 
 def _iso_mtime(path: Path) -> str | None:
