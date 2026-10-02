@@ -103,18 +103,65 @@ def app(config: Config):
 
 @pytest.fixture
 def client(app):
+    """An unauthenticated test client.
+
+    Each test that needs an account calls :func:`perform_setup` first (directly
+    on the app's context, so it does not depend on request ordering); the
+    ``owner`` fixture below runs it for the tests that want a signed-in admin.
+    """
     from starlette.testclient import TestClient
 
     with TestClient(app, base_url="http://localhost") as test_client:
         yield test_client
 
 
+def perform_setup(app, username: str = ADMIN_USERNAME,
+                  password: str = ADMIN_PASSWORD, **extra) -> dict:
+    """Create the first administrator account through the service layer.
+
+    Equivalent to ``POST /api/v1/auth/setup`` but without the HTTP round trip,
+    so a test that is about *authentication* does not first have to get
+    *authentication working*.
+    """
+    from streamserver.db import repositories as repo
+    from streamserver.security import passwords
+
+    context = app.state.context
+    db = context.db
+    if repo.get_user_by_username(db, username):
+        raise AssertionError(f"{username} already exists; each test needs a clean app")
+
+    config = context.config
+    user = repo.create_user(
+        db, username=username,
+        password_hash=passwords.hash_password(
+            password, n=config.auth.scrypt_n, r=config.auth.scrypt_r,
+            p=config.auth.scrypt_p, maxmem=config.auth.scrypt_maxmem,
+        ),
+        is_admin=True, display_name=extra.get("display_name") or username,
+        must_change_password=extra.get("must_change_password", False),
+    )
+    repo.create_profile(db, int(user["id"]), extra.get("profile_name") or "Main")
+    return user
+
+
 @pytest.fixture
-def owner(client):
-    """An administrator account with a live token."""
+def setup(app):
+    """Create the first administrator account.  Returns its row."""
+    return perform_setup(app)
+
+
+@pytest.fixture
+def owner(client, setup):
+    """An administrator account with a live token.
+
+    Sign-in is still exercised here -- but deliberately *after* the account is
+    known to exist, so a failure in this fixture points at the login flow
+    rather than at the setup path underneath it.
+    """
     response = client.post(
         "/api/v1/auth/login",
-        json={"username": ADMIN_USERNAME, "password": ADMIN_PASSWORD,
+        json={"username": setup["username"], "password": ADMIN_PASSWORD,
               "device_name": "pytest"},
     )
     assert response.status_code == 200, response.text
@@ -123,6 +170,7 @@ def owner(client):
         "token": body["access_token"],
         "refresh": body["refresh_token"],
         "user_id": body["user"]["id"],
+        "username": setup["username"],
         "headers": {"Authorization": f"Bearer {body['access_token']}"},
     }
 
@@ -141,14 +189,16 @@ def admin_profile(client, owner) -> dict:
 
 
 @pytest.fixture
-def second_user(client, config: Config, db: Database):
-    """A second, non-administrator account, used for the IDOR tests."""
+def second_user(app, setup, config: Config):
+    """A second, non-administrator account, used for the IDOR tests.
+
+    Returns credentials plus a helper that signs that account in.
+    """
     from streamserver.db import repositories as repo
     from streamserver.security import passwords
 
-    if repo.get_user_by_username(db, "bob"):
-        return {"username": "bob", "password": USER_PASSWORD}
-    repo.create_user(
+    db = app.state.context.db
+    user = repo.create_user(
         db, username="bob",
         password_hash=passwords.hash_password(
             USER_PASSWORD, n=config.auth.scrypt_n, r=config.auth.scrypt_r,
@@ -156,9 +206,35 @@ def second_user(client, config: Config, db: Database):
         ),
         is_admin=False, display_name="Bob",
     )
-    repo.create_profile(db, int(repo.get_user_by_username(db, "bob")["id"]), "Bob")
-    db.close()
-    return {"username": "bob", "password": USER_PASSWORD}
+    repo.create_profile(db, int(user["id"]), "Bob")
+
+    return {
+        "username": "bob",
+        "password": USER_PASSWORD,
+        "user_id": int(user["id"]),
+    }
+
+
+@pytest.fixture
+def second_session(client, second_user):
+    """``second_user`` signed in: headers plus its profile id."""
+    response = client.post("/api/v1/auth/login", json={
+        "username": second_user["username"], "password": second_user["password"],
+    })
+    assert response.status_code == 200, response.text
+    token = response.json()["access_token"]
+    auth = {"Authorization": f"Bearer {token}"}
+
+    profiles = client.get("/api/v1/profiles", headers=auth).json()
+    assert profiles
+    profile_id = profiles[0]["id"]
+    return {
+        **second_user,
+        "token": token,
+        "profile_id": profile_id,
+        "auth": auth,
+        "headers": {**auth, "X-Profile-Id": str(profile_id)},
+    }
 
 
 @pytest.fixture

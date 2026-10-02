@@ -122,6 +122,7 @@ class ServerInfo(BaseModel):
     library_roots: list[str] = Field(default_factory=list)
     ffprobe_available: bool = False
     metadata_provider: str = "local"
+    #: Feature flags only -- no information about routes or privileges.
     capabilities: dict[str, bool] = Field(default_factory=dict)
 
 

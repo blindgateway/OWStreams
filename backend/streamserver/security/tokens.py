@@ -84,10 +84,22 @@ def _b64u_encode(raw: bytes) -> str:
     return base64.urlsafe_b64encode(raw).rstrip(b"=").decode("ascii")
 
 
-def _b64u_decode(text: str) -> bytes:
-    padding = "=" * (-len(text) % 4)
+def _b64u_decode(text: str | bytes) -> bytes:
+    """Decode base64url, tolerating the input arriving as str or bytes.
+
+    Callers pass a file read as bytes (the signing key) as well as str (token
+    segments), so both are accepted rather than failing on a type mismatch that
+    is a bug here rather than an attack.
+    """
+    if isinstance(text, bytes):
+        raw = text.strip()
+    elif isinstance(text, str):
+        raw = text.strip().encode("ascii", errors="ignore")
+    else:
+        raise TokenError("token is not valid base64url")
+    padding = b"=" * (-len(raw) % 4)
     try:
-        return base64.urlsafe_b64decode(text + padding)
+        return base64.urlsafe_b64decode(raw + padding)
     except Exception as exc:  # noqa: BLE001 - any decode failure is the same
         raise TokenError("token is not valid base64url") from exc
 

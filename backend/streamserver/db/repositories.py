@@ -148,21 +148,59 @@ def create_user(
     return get_user(db, user_id) or {}
 
 
+#: Writable user columns, mapped to the SQLite type each accepts.  A value of
+#: the wrong type is a programming error, not a runtime surprise three layers
+#: up in the API layer.
+USER_FIELDS: dict[str, type] = {
+    "email": str,
+    "display_name": str,
+    "password_hash": str,
+    "password_changed_at": str,
+    "must_change_password": int,
+    "is_admin": int,
+    "is_active": int,
+    "autoplay": str,
+    "preferred_audio_lang": str,
+    "preferred_subtitle_lang": str,
+    "last_login_at": str,
+    "playback_preference": str,
+}
+
+#: Fields whose falsy value is meaningful and must still be written.  Every
+#: other field treats 0/""/False as "not supplied", because ``update_user``
+#: is called with ``**fields`` built from optional request bodies where an
+#: absent key and a default value are indistinguishable.
+_USER_BOOL_FIELDS = {"must_change_password", "is_admin", "is_active"}
+
+
+def _normalise_user_value(field: str, value: Any) -> Any:
+    if field in _USER_BOOL_FIELDS:
+        return int(bool(value))
+    return value
+
+
 def update_user(db: Database, user_id: int, **fields: Any) -> dict[str, Any] | None:
-    allowed = {
-        "email", "display_name", "password_hash", "password_changed_at",
-        "must_change_password", "is_admin", "is_active", "autoplay",
-        "preferred_audio_lang", "preferred_subtitle_lang", "last_login_at",
-        "playback_preference",
+    """Update the supplied columns of one user.
+
+    Booleans are coerced to 0/1 because SQLite has no boolean type and the
+    callers pass Python ``bool``.  Without that, a boolean binds as 1/0 but a
+    column declared INTEGER still receives it -- however ``is_admin=0`` would
+    be indistinguishable from "not supplied" if falsy values were dropped
+    wholesale, which is why only the boolean columns survive that filter.
+    """
+    updates = {
+        key: _normalise_user_value(key, value)
+        for key, value in fields.items()
+        if key in USER_FIELDS and (value is not None or key in _USER_BOOL_FIELDS)
     }
-    updates = {k: v for k, v in fields.items() if k in allowed and v is not None}
     if not updates:
         return get_user(db, user_id)
-    set_clause = ", ".join(f"{k} = ?" for k in updates)
-    params = list(updates.values()) + [utcnow(), user_id]
+
+    set_clause = ", ".join(f"{key} = ?" for key in updates)
+    # updated_at is set by SQLite's own datetime(), so there is no extra binding.
     db.execute(
         f"UPDATE users SET {set_clause}, updated_at = datetime('now') WHERE id = ?",
-        tuple(params),
+        tuple(updates.values()) + (user_id,),
     )
     return get_user(db, user_id)
 
@@ -209,6 +247,10 @@ def get_profile_pin(db: Database, profile_id: int) -> dict[str, Any] | None:
     )
 
 
+class DuplicateNameError(ValueError):
+    """A unique (user_id, name) constraint was violated."""
+
+
 def create_profile(
     db: Database,
     user_id: int,
@@ -224,17 +266,24 @@ def create_profile(
         row = db.query_one("SELECT COALESCE(MAX(sort_order), -1) + 1 FROM profiles WHERE user_id = ?",
                            (user_id,))
         sort_order = int(row[0]) if row else 0
-    with db.write() as conn:
-        cur = conn.execute(
-            "INSERT INTO profiles (user_id, name, avatar_id, pin_hash, pin_updated_at, "
-            "is_kids, max_watch_minutes, sort_order) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-            (
-                user_id, name, avatar_id, pin_hash,
-                utcnow() if pin_hash else None,
-                int(is_kids), max_watch_minutes, sort_order,
-            ),
-        )
-        profile_id = int(cur.lastrowid or 0)
+    try:
+        with db.write() as conn:
+            cur = conn.execute(
+                "INSERT INTO profiles (user_id, name, avatar_id, pin_hash, pin_updated_at, "
+                "is_kids, max_watch_minutes, sort_order) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                (
+                    user_id, name, avatar_id, pin_hash,
+                    utcnow() if pin_hash else None,
+                    int(is_kids), max_watch_minutes, sort_order,
+                ),
+            )
+            profile_id = int(cur.lastrowid or 0)
+    except sqlite3.IntegrityError as exc:
+        # The schema enforces UNIQUE (user_id, name); translating it here means
+        # the API can answer 409 instead of leaking a 500.
+        if "UNIQUE" in str(exc).upper():
+            raise DuplicateNameError(f"a profile named {name!r} already exists") from exc
+        raise
     return get_profile(db, profile_id) or {}
 
 

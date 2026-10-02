@@ -16,6 +16,7 @@ from typing import Any
 
 from ..db import repositories as repo
 from ..db.database import Database
+from ..db.repositories import DuplicateNameError
 from ..security import passwords
 from ..security.audit import AuditLogger, SecurityEventTypes
 
@@ -151,10 +152,16 @@ class ProfileService:
         if pin is not None:
             pin_hash = self._hash_pin(pin)
 
-        created = repo.create_profile(
-            self.db, user_id, clean_name, avatar_id=avatar_id, pin_hash=pin_hash,
-            is_kids=is_kids, max_watch_minutes=max_watch_minutes,
-        )
+        try:
+            created = repo.create_profile(
+                self.db, user_id, clean_name, avatar_id=avatar_id, pin_hash=pin_hash,
+                is_kids=is_kids, max_watch_minutes=max_watch_minutes,
+            )
+        except DuplicateNameError as exc:
+            raise ProfileError(
+                f"A profile called {clean_name!r} already exists.",
+                code="profile_name_taken", status_code=409,
+            ) from exc
         self.audit.record(
             "profile.created", outcome="ok", user_id=user_id, profile_id=int(created["id"]),
             detail={"name": clean_name, "has_pin": pin_hash is not None},
@@ -185,7 +192,13 @@ class ProfileService:
         if sort_order is not None:
             fields["sort_order"] = int(sort_order)
 
-        updated = repo.update_profile(self.db, profile_id, **fields)
+        try:
+            updated = repo.update_profile(self.db, profile_id, **fields)
+        except DuplicateNameError as exc:
+            raise ProfileError(
+                "Another profile already uses that name.",
+                code="profile_name_taken", status_code=409,
+            ) from exc
         return ProfileView.from_row(updated or {})
 
     def delete(self, user_id: int, profile_id: int) -> None:

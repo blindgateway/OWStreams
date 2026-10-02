@@ -244,6 +244,10 @@ def _server_info(request: Request, context, *, authenticated: bool) -> ServerInf
         library_roots=[str(p) for p in context.registry.list_roots()],
         ffprobe_available=MediaProbe(context.config.media.ffprobe_path).available,
         metadata_provider=context.config.metadata.default_provider,
+        # Feature flags only.  Deliberately says nothing about which routes
+        # exist, which of them are privileged, or what the deployment allows:
+        # this endpoint is unauthenticated, so every key is an answer to a
+        # question an unauthenticated caller can ask.
         capabilities={
             "profiles": True,
             "watch_history": True,
@@ -252,7 +256,6 @@ def _server_info(request: Request, context, *, authenticated: bool) -> ServerInf
             "playback": True,
             "collections": True,
             "series": True,
-            "admin_import": True,
         },
     )
 
