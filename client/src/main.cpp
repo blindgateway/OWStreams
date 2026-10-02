@@ -3,6 +3,7 @@
 #include <QQmlContext>
 
 #include "apiclient.h"
+#include "appcontroller.h"
 #include "credentialstore.h"
 #include "sessioncontroller.h"
 
@@ -20,6 +21,11 @@ int main(int argc, char *argv[])
     app.setApplicationVersion(QStringLiteral("1.0.0"));
 
     SessionController session;
+    // The signed-in app exists before anyone has signed in; it is only shown
+    // once a profile is selected, and every screen inside it reloads when the
+    // profile changes, so switching profiles is a controller call rather than a
+    // rebuild of the window.
+    AppController controller(session.api());
     session.restore();
 
     QQmlApplicationEngine engine;
@@ -28,11 +34,11 @@ int main(int argc, char *argv[])
     // reads `App.session` / `App.api` / `App.credentials`.  One place for the
     // linter to check, and a renamed property fails the build rather than
     // becoming a runtime TypeError.
-    engine.rootContext()->setContextProperty(QStringLiteral("App"), nullptr);
     engine.rootContext()->setContextProperty(QStringLiteral("session"), &session);
     engine.rootContext()->setContextProperty(QStringLiteral("api"), session.api());
     engine.rootContext()->setContextProperty(QStringLiteral("credentials"),
                                              session.credentials());
+    engine.rootContext()->setContextProperty(QStringLiteral("controller"), &controller);
 
     QObject::connect(
         &engine, &QQmlApplicationEngine::objectCreationFailed, &app,

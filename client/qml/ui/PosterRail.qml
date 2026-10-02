@@ -15,10 +15,24 @@ Item {
     id: root
 
     property string title
-    property var model           // PosterCard-compatible array of maps
+    /// A MediaListModel, or a JS array of maps for previews.  A model rather
+    /// than an array because a list of 500 maps cannot be indexed cheaply from
+    /// QML, and a favourite toggle has to update one row rather than reset the
+    /// whole rail.
+    property var model
     property int limit
     property bool loading
     property string emptyText
+
+    /// True when the model holds nothing -- an empty rail shows its message
+    /// and a populated one does not, and only the model can say which.
+    readonly property bool isEmpty: {
+        if (!root.model)
+            return true
+        if (root.model.count !== undefined)     // MediaListModel
+            return root.model.count === 0
+        return root.model.length === 0          // a plain array
+    }
 
     signal activated(int mediaId)
 
@@ -84,7 +98,7 @@ Item {
             spacing: Theme.spaceLg
             Repeater {
                 id: repeater
-                model: root.model || []
+                model: root.model
                 delegate: PosterCard {
                     id: card
                     required property var modelData
@@ -106,7 +120,7 @@ Item {
 
     Text {
         anchors.centerIn: parent
-        visible: !root.loading && (!root.model || root.model.length === 0)
+        visible: !root.loading && root.isEmpty
                  && (root.emptyText !== undefined && root.emptyText !== "")
         text: root.emptyText
         color: Theme.textMuted

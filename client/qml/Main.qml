@@ -39,6 +39,7 @@ ApplicationWindow {
         App.session = session
         App.api = api
         App.credentials = credentials
+        App.controller = controller
         Responsive.window = root
     }
 

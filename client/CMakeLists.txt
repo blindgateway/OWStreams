@@ -22,6 +22,10 @@ qt_add_executable(stream-client
     src/sessioncontroller.h
     src/librarymodel.cpp
     src/librarymodel.h
+    src/homescreenmodel.cpp
+    src/homescreenmodel.h
+    src/appcontroller.cpp
+    src/appcontroller.h
 )
 
 target_compile_definitions(stream-client PRIVATE
@@ -52,6 +56,7 @@ qt_add_qml_module(stream-client
         qml/screens/ServerScreen.qml
         qml/screens/LoginScreen.qml
         qml/screens/ProfileScreen.qml
+        qml/screens/HomeScreen.qml
 )
 
 target_include_directories(stream-client PRIVATE src)

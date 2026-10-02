@@ -4,8 +4,8 @@ import QtQuick
 
 /// The app's singletons, in one place.
 ///
-/// QML context properties (`session`, `api`, `credentials`) are injected from
-/// C++ and are therefore invisible to `qmllint`: every unqualified reference
+/// QML context properties (`session`, `api`, `credentials`, `controller`) are
+/// injected from C++ and are therefore invisible to `qmllint`: every unqualified reference
 /// to them is a warning, and a typo in one is a runtime failure rather than a
 /// lint error.
 ///
@@ -20,6 +20,7 @@ QtObject {
     property var session: null
     property var api: null
     property var credentials: null
+    property var controller: null    // AppController *
 
     /// Whether the credential store found a platform keychain.  When false the
     /// app refuses to persist a session rather than writing a token to a file.
