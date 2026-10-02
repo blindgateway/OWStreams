@@ -138,6 +138,17 @@ are concrete:
   the route inventory and asserts every admin route is guarded, so a new one
   cannot slip in.
 
+And the corollary, which cost more: **a dependency that no route takes is not a
+control.** `require_uncapped` — the gate that stops an account still on the
+shipped default password from writing anything — was written, documented,
+exported and wired into nothing, so the account could rate, favourite, stream
+and write watch history. `tests/test_client_routes.py` now walks the routers
+and asserts that every mutating route resolves its caller through it. The same
+argument applies to profile strictness: `ProfileDep` falls back to the
+account's first profile, which is right for the catalogue and wrong for
+anything that is per profile by definition, so those routes take
+`OwnProfileDep`, which refuses an unnamed profile instead.
+
 One subtlety, learned the hard way and encoded in `deps.py`: under
 `from __future__ import annotations` an `Annotated[...]` alias written as a
 string annotation is *never resolved* by FastAPI. The dependency is silently
@@ -172,6 +183,46 @@ Details that matter:
 - One request per 8 MiB means a 40 GB film is ~5000 requests. That is why
   `RequestContextMiddleware` collapses logging per session: at ~200 bytes a
   line, per-request logging would fill the 10 GB SSD and bury everything else.
+
+## The client
+
+The client is a thin shell over three C++ objects, and the shell is the only
+part QML can see as presentation.
+
+```
+App.qml ── Main.qml ── Shell.qml (sidebar │ rail │ bottom bar)
+                      └── one screen at a time:
+                          Server, Login, ChangePassword, Profile,
+                          Home, MediaGrid (library │ search │ favourites
+                          │ history), Detail, Player, Settings
+
+AppController          which screen, and what it asked for
+  ├── SessionController   which state the session is in
+  │     └── ApiClient     one HTTP request, one typed answer
+  ├── MediaListModel      a page of titles
+  ├── HomeScreenModel      eight rails, one request
+  └── PlaybackController   the player's rules and its progress throttle
+```
+
+Three rules, each of which exists because breaking it was a bug a test found:
+
+- **The QML never talks to the network.** Everything a screen shows comes from
+  a C++ object, so every rule in those objects is testable without a window,
+  a platform plugin or a display — which is what makes seven suites runnable
+  on a build machine.
+- **A credential is attached by one object, on a narrow scope.**
+  `CredentialAccessManager` adds `Authorization` *and* `X-Profile-Id` to the
+  artwork and streaming routes only, because those are the two `Image` and the
+  media backend fetch by URL and cannot be given a header. Every other request
+  is built by `ApiClient::send`, which writes the profile header itself. The
+  scope is an explicit prefix list rather than "not `/api`", because the safe
+  default for a request the code does not recognise is *no credential*.
+- **An id travels in the path, and the path is what the answer is about.**
+  Every request body is a `StrictModel` with `extra="forbid"`, so an id in a
+  body is a 422 — and the client's `handle()` reports the *intent* rather than
+  the server's answer, so the failure is invisible in the UI. Three routes end
+  in a verb rather than the id, which is why `Pending` carries the id
+  explicitly rather than reading it back out of the path.
 
 ## Media import
 
@@ -246,8 +297,8 @@ inside `BEGIN IMMEDIATE` fails with "database table is locked".
   see [API.md](API.md) for the compatibility policy.
 - **Android TV** — the client is architected for it: the API has no
   platform-specific routes, playback goes through one token/Range flow, and
-  navigation is a rail rather than a pointer-driven surface. The client side is
-  not built yet; see [ROADMAP.md](ROADMAP.md).
+  navigation is a rail rather than a pointer-driven surface. The TV application
+  is not built; see [ROADMAP.md](ROADMAP.md).
 
 ## See also
 

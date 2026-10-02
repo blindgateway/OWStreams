@@ -8,7 +8,7 @@ Stream/
 │   ├── pyproject.toml
 │   ├── streamserver/
 │   └── tests/
-├── client/           the Qt 6 / QML application (not built yet)
+├── client/           the Qt 6 / QML application
 ├── docs/             this documentation
 └── scripts/
 ```
@@ -181,8 +181,6 @@ write the test that finds it first.
 
 ## Building the client
 
-Not yet implemented. The intended shape:
-
 ```bash
 cd client
 cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
@@ -190,16 +188,52 @@ cmake --build build
 ./build/stream-client
 ```
 
-The build toolchain is present and verified on this machine: Qt 6.11.2 with
-Quick, Qml, QuickControls2, Network, Multimedia and Svg; CMake 4.3.0; Ninja
-1.13.2. A trivial QML application configures, compiles and links. There is no
-`CMakeLists.txt` yet — the `client/` tree is empty. See
-[ROADMAP.md](ROADMAP.md).
+Verified on this machine: Qt 6.11.2 with Quick, Qml, QuickControls2, Network,
+Multimedia and Svg; CMake 4.3.0; Ninja 1.13.2.
 
-Qt 6 Quick with `qt_standard_project_setup` and one `qt_add_qml_module` per
-logical area. Core logic in C++; all presentation in QML. Platform packaging
-(Windows `.exe`, Android `.apk`) via `qt_generate_deploy_app_script` and
-`android/` — see [ROADMAP.md](ROADMAP.md).
+`qt_standard_project_setup` plus one `qt_add_qml_module` for the `Stream`
+module, which carries both the QML and the C++ types registered with
+`QML_ELEMENT`. `QT_NO_CAST_FROM_ASCII` is on for every target, so a string
+literal in a C++→QML boundary is a compile error rather than a silent
+transliteration — and, on the test targets, so is a printf-style `qWarning`,
+which Qt 6 drops along with the rest of that overload.
+
+### Lint
+
+`qmllint` runs as a `POST_BUILD` step on `stream-client` and fails the build on
+any warning. `client/lint.sh` finds the linter and the import path; the
+suppressions it applies live in `client/.qmllint.ini`, each with a written
+justification. Add a suppression with its reason, never without one.
+
+### Tests
+
+```bash
+cd client
+cmake -S . -B build-test -G Ninja && cmake --build build-test
+(cd build-test && ctest --output-on-failure)
+```
+
+One executable per suite — two `QTEST_MAIN` files in one binary is two
+definitions of `main()` — and every one is `QTEST_GUILESS_MAIN`, because
+`QTEST_MAIN` aborts on a headless machine and reports as "Subprocess aborted"
+rather than as a failure. ctest sets `QT_QPA_PLATFORM=offscreen` anyway.
+
+`client-e2e` needs `python3` and `ffmpeg` on `PATH` and starts the real server;
+`client/tests/e2e/README.md` explains the fixture. Pass
+`-DSTREAM_BUILD_E2E=OFF` to skip building it. It skips with a *reason* rather
+than failing twenty times over "ffmpeg is missing".
+
+### Adding a screen
+
+1. The behaviour goes in a C++ controller exposed as a `QML_ELEMENT`; the QML
+   binds to it. A screen that reaches the network itself cannot be tested
+   without a window.
+2. `MediaListModel`-style models carry the data; the QML binds and never
+   mutates.
+3. Every asynchronous load needs three states — loading, empty, error — and the
+   error state says *what* went wrong, not "something went wrong".
+4. `qt_add_qml_module`'s `QML_FILES` list is the module's manifest: a file not
+   in it is not compiled, not linted and not found at runtime.
 
 ## Repository hygiene
 

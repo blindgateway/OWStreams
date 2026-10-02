@@ -333,6 +333,48 @@ investigating rather than vacuuming away.
 the log is still large, a client is hammering `/library/search`; the search
 bucket allows 120/minute.
 
+If the stream summary line never appears at all, the folding is not running.
+It tests the request path for a `stream` *segment*; a change that compares the
+path with `startswith("/api/v1/stream/")` is always false for `/api/v1/stream/7`
+and every chunk gets its own line. `test_api_playback.py` asserts a stream
+produces the summary, so this cannot come back without a test failing.
+
+---
+
+## The client
+
+**"The server did not return a playable source" on a title the server has**
+
+`playbackStarted` carried an empty URL when the client's media id did not match
+the one it was streaming. The id is stamped onto the client *before* the URL is
+built from it; if the two are reordered the URL comes out empty and the player
+reports a playback failure for a title the server has just authorised.
+
+**Favourites or ratings do not persist, and the UI updates anyway**
+
+Every request body is a `StrictModel` with `extra="forbid"`. An id sent in the
+body where the route takes it as a path parameter is a 422, and the client's
+`handle()` emits `favoriteChanged` for the *intent* rather than for the
+server's answer — so the tile fills in and nothing is stored. Watch the server
+log for `422`, or assert on the bytes with `client/tests/tst_apiclient.cpp`.
+
+**Everything looks like the wrong profile's data**
+
+The client sends `X-Profile-Id` on every profile-scoped route, including `0`
+before a profile is chosen. If the header is missing the server falls back to
+the account's *first* profile and answers 200 — the one case where silence is
+worse than an error. Per-profile routes answer 400 `profile_required` when no
+profile is named, so a dropped header shows up immediately.
+
+**The QML loads but every object is `undefined`**
+
+The build tree's `Stream` module is not on the library search path. Running the
+binary from a shell that happens to have it works; running it under `ctest`
+does not, because `add_test` puts the test's build directory on the path and not
+the one below it. The symptom is `TypeError: Cannot call method 'value' of
+undefined`, several layers from the cause. The e2e target sets `BUILD_RPATH`
+for exactly this.
+
 ---
 
 ## Database and backups

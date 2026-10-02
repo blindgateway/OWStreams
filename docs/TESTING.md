@@ -2,12 +2,17 @@
 
 ```bash
 cd backend
-python -m pytest          # 497 tests, about 60 seconds
+python -m pytest          # 602 tests, about 2m30s
+
+cd ../client
+cmake -S . -B build-test -G Ninja && cmake --build build-test
+(cd build-test && ctest)  # 94 tests, seconds
 ```
 
-Every test runs offline, needs no root, and touches no network. The suite is
-the reason the server can be trusted to run unattended; this document says
-what is covered, how, and — just as importantly — what is not.
+Every server test runs offline, needs no root, and touches no network. The
+client has one suite that deliberately does neither: it starts the real server
+over loopback. This document says what is covered, how, and — just as
+importantly — what is not.
 
 ## Philosophy
 
@@ -22,8 +27,10 @@ says what the server does. `test_parse_filename_2` says nothing.
 **Hostile input is normal input.** Filenames, sidecars, ffprobe output and HTTP
 bodies all come from outside, and all of them are tested as if hostile.
 
-**No test may depend on wall-clock timing, the network, or a real media file.**
-ffprobe is invoked only against files the test itself creates.
+**No *server* test may depend on wall-clock timing, the network, or a real
+media file.** ffprobe is invoked only against files the test itself creates.
+The client has one deliberate exception — `tests/tst_e2e.cpp` — and it is an
+end-to-end test that says so rather than pretending to be a unit test.
 
 ## Layout
 
@@ -40,7 +47,20 @@ tests/
 ├── test_api_library.py          browse, filter, sort, search, favourites, history
 ├── test_api_playback.py         tokens, ranges, streaming, progress, 404/410
 ├── test_api_admin.py            every admin route, and that a non-admin reaches none
+├── test_client_routes.py        every path the client builds; the gate and the
+│                                profile-strictness of every mutating route
 └── test_cli.py                  every subcommand, including failure paths
+
+client/tests/
+├── fakeserver.{h,cpp}           a loopback HTTP server that records requests
+├── tst_apiclient.cpp            what the client puts on the wire
+├── tst_apierror.cpp             the error taxonomy
+├── tst_credentialaccess.cpp     which requests carry a token
+├── tst_sessioncontroller.cpp    the session state machine
+├── tst_librarymodel.cpp         list-model roles, paging, filtering
+├── tst_appcontroller.cpp        navigation and per-screen loading
+├── tst_playbackcontroller.cpp   the player's rules and its progress throttle
+└── e2e/                         harness.py, ServerFixture: the real server
 ```
 
 ## Fixtures
@@ -56,6 +76,7 @@ tests/
 | `owner` / `admin_profile` | A signed-in administrator and its default profile |
 | `second_user` / `second_session` | A *different* account, for IDOR tests |
 | `library` | Three imported titles |
+| `capped` / `capped_session` | A signed-in **non-administrator** still owing a password change — the account the default-password gate exists for |
 | `autouse_scratch` | Keeps scratch files inside `$TMPDIR` |
 
 Nothing is module-global, so each test gets an independent application
@@ -159,6 +180,30 @@ deactivating revokes sessions; `password_hash` never appears in a response;
 `delete_file=true` is always refused; a path outside the roots is refused;
 `/admin/settings` reports whether a key is configured, never the key.
 
+### The client's contract with the server
+
+`test_client_routes.py` is mechanical, and it exists because the defect it
+catches is invisible to both suites on its own: the client's tests answer from
+a canned table, so a path the server does not serve still "works", and the
+server's tests call each route directly, so a path nobody calls is still
+covered. Nothing asked whether the two agreed. Three things are asserted:
+
+- every path the client builds is a route the server serves, with the
+  comparison on *shapes* (`{media_id}` and `{profile_id}` are the same shape);
+- the routes whose answer is per profile by definition — favourites, history,
+  continue-watching, ratings, the home rails — take `OwnProfileDep`, which
+  refuses an unnamed profile, while the catalogue keeps the lenient
+  `ProfileDep`. Getting this backwards answers a caller with somebody else's
+  list;
+- every mutating route resolves its caller through `require_uncapped`, so an
+  account on the shipped default password cannot write. `UncappedDep` existed
+  and was wired into nothing, which is what the third assertion now prevents.
+
+Each of those checks asserts that it *found* what it was written to find, so a
+refactor cannot quietly turn twenty assertions into twenty passes over an empty
+list. That is not hypothetical: the first version of this file passed over an
+empty list three different ways.
+
 ### CLI
 Every subcommand, including: `init-db` is idempotent; `init-config` refuses to
 clobber and writes `0600`; `doctor` passes on a healthy install and reports a
@@ -213,21 +258,74 @@ Every one of these was a real defect in code that looked correct:
   that did not exist** — each handler had to remember it.
 - **A duplicated block of helper definitions in `naming.py`** was shadowed by a
   later identical copy, so a fix applied to the first had no effect.
+- **`require_uncapped` was wired into nothing.** The default-password gate was
+  written, documented and exported, and no route took it — so an account on the
+  shipped default password could rate, favourite, start and close a playback
+  session and write watch history, which is the exact state the first-run flow
+  exists to stop somebody else leaving behind.
+- **The request logger never folded a stream.** It tested the path with
+  `startswith("/api/v1/stream/")`, which is never true — the route is
+  `/api/v1/stream/7` — so every chunk of every playback wrote its own log
+  line. A feature film is thousands of them, on a 10 GB SSD.
+- **A foreign profile answered `{"error": "not_found"}`.** `_resolve_profile`
+  raised the bare-string form, so the documented `profile_not_found` was lost
+  and a client could not tell "not yours" from "no such title".
+
+### The client's contract with itself
+
+`client/tests/tst_e2e.cpp` runs the client against the production server —
+the real config file, a real database with its own signing key, a real
+account, and a library holding a clip ffmpeg generated — and found nine
+defects that every other suite had passed:
+
+- **Four requests were answered 422.** Favourites, ratings, progress reports
+  and playback start each sent ids in a body; every body is a `StrictModel`
+  with `extra="forbid"`. All four silently did nothing, and the favourite rail
+  still updated, because `handle()` reports the *intent* rather than the
+  server's answer.
+- **`profiles/select` sent no body at all**, so choosing a profile was a 422
+  and the session machine waited forever for a `profileSelected` that never
+  came.
+- **The profile header was never sent.** `send()` tested the request path for
+  a prefix of `/library`; the path is `/api/v1/library/favorites`, so the test
+  was false for *every* profile-scoped route, and the server fell back to the
+  account's first profile for every library read.
+- **Playback announced an empty source**, because the media id was stamped onto
+  the client one line after the URL was built from it and `streamUrl` returns
+  empty for any other id. The player reported "the server did not return a
+  playable source" for a title the server had just authorised.
+- **Unlocking a PIN profile announced profile 0**, and `selectProfile` adopted
+  it — so unlocking signed you in as no profile at all.
+
+None of these is visible from the response: a 2xx arrives, the model updates,
+and the only symptom is that nothing is ever persisted. The regression tests
+for all nine are in the suite — four in `tst_apiclient.cpp` (which asserts on
+the bytes) and the rest here and in the client suites.
 
 ## What is not covered
 
 Stated plainly, because a test suite that pretends is worse than none.
 
-- **The client.** There is no client yet, so there are no QML tests, no
-  screenshot comparison, no end-to-end user walkthrough. This is the largest
-  gap and it is the reason the project is not finished.
+- **QML itself.** The C++ behind the client is tested — the session machine,
+  the models, the player, the bytes on the wire, and the whole app against a
+  real server. The QML is checked by `qmllint` on every build, which is a
+  syntax, type and property check, not a behavioural one: nothing renders a
+  `Item` and asserts on it. The end-to-end suite drives the same controllers
+  the QML binds to, so a wrong *binding* would not be caught by it.
+- **Screenshot comparison.** No reference image has been supplied, so the
+  visual design has been built to the brief's stated constraints and not
+  checked against anything.
+- **The full acceptance walkthrough** from the brief, run against a packaged
+  build rather than from the source tree.
 - **Live external metadata providers.** `TmdbProvider`, `ImdbProvider` and
   `OmdbProvider` are implemented and unit-tested for their parsing and
   availability logic, but have never been run against a live API — the
   development environment has no network egress. Their error handling for a
   timeout, a 429 or a changed response shape is written but unexercised.
 - **Windows and Android builds.** The server is platform-independent Python;
-  the client is unbuilt. Nothing has been compiled for a second platform.
+  the client builds and runs on Linux. Nothing has been compiled for a second
+  platform, so the keychain backends for Windows and macOS are written and
+  untested.
 - **Load.** Correctness at 1000 titles is tested; throughput at 10 concurrent
   streams is not. The design work for it is done (indexed queries, bounded
   page cache, 8 MiB chunks, per-session logging) but it is untested.

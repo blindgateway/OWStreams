@@ -101,6 +101,16 @@ by a script or a migration:
 streamserver add-user someone --must-change-password
 ```
 
+That flag is not a suggestion. While the flag is set the account may **read** —
+it has to, or the client cannot render the change-password screen — and may not
+change anything else: not favourites, not ratings, not playback, not the users
+table. Requests are refused with 403 and `X-Requires-Password-Change: true`,
+and the client shows the password screen. Administrators are exempt, so
+`add-user --admin` (the documented first-run) is never locked out; every other
+account gets the prompt. `POST /api/v1/auth/password`, login, refresh and
+logout are always permitted, so a flagged account can always fix itself or walk
+away.
+
 ## 5. Import the library
 
 ```bash

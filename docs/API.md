@@ -35,11 +35,27 @@ additionally require `is_admin`.
 
 ### Profile scoping
 
-Routes that return or mutate *per-profile* state (favourites, history,
-ratings, playback) require an `X-Profile-Id` header naming a profile owned by
-the authenticated account. Ownership failures return **404, not 403** — the
-response must not confirm that another account's profile exists. The profile id
-baked into an access token is used when the header is absent.
+A session token names an *account*. Per-profile routes need a *profile*, and
+they get it from the `X-Profile-Id` header or from a playback token, which
+carries one. Ownership failures return **404, not 403** — the response must not
+confirm that another account's profile exists.
+
+The routes divide into two kinds, and the difference is a 400:
+
+| Kind | Routes | Header absent |
+|---|---|---|
+| Account-scoped | the catalogue, one title, search, suggest, categories, a poster | the account's first profile is used |
+| Per-profile | `/library/favorites`, `/library/history`, `/library/continue-watching`, `/library/home`, ratings, playback | **400 `profile_required`** |
+
+A per-profile route that fell back to the account's first profile would answer
+one household member with another's favourites, and the client's own header
+would be ignored while it still appeared to be doing the right thing. A
+playback token is exempt because it names its profile. `X-Profile-Id: 0` — what
+the client sends before a profile has been chosen — is a 404
+`profile_not_found`, not a silent fallback.
+
+`tests/test_client_routes.py` asserts the split by walking the routers, so a
+new per-profile route cannot quietly take the lenient dependency.
 
 ### Pagination
 
@@ -68,10 +84,12 @@ the `X-Request-Id` header and appears in the server log.
 
 | Status | `error` | When |
 |---|---|---|
-| 400 | `bad_request` | malformed request the schema allowed |
+| 400 | `bad_request` | malformed request the schema allowed; `X-Profile-Id` that is not an integer |
+| 400 | `profile_required` | a per-profile route was called with no `X-Profile-Id` and a session token |
 | 401 | `unauthenticated` | missing, expired, malformed or revoked token |
-| 403 | `forbidden` | valid token, wrong privilege — including a playback token presented to a non-stream route |
+| 403 | `forbidden` | valid token, wrong privilege — including a playback token presented to a non-stream route, and any mutation by an account still on the shipped default password (`X-Requires-Password-Change: true`) |
 | 404 | `not_found` | absent, hidden, or owned by somebody else |
+| 404 | `profile_not_found` | `X-Profile-Id` names a profile the caller does not own (including `0`) |
 | 409 | `conflict` | duplicate username or profile name; setup already done |
 | 413 | `payload_too_large` | upload or import body over the cap |
 | 422 | `validation_error` | failed schema validation |

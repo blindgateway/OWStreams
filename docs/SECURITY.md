@@ -279,11 +279,13 @@ This section is the reason the document exists.
 - **No DRM. No anti-piracy service. No watermark.** The brief asked for none of
   these and they are not here. Anything the server sends can be captured by
   whoever receives it.
-- **A client-side screenshot block is not a lock.** The client can set
-  `FLAG_SECURE` on Android and use a secure window where the platform supports
-  it. That raises the cost of a casual screenshot. It does not stop anyone with
-  a camera, a second device, or a modified client, and this document will not
-  pretend otherwise.
+- **A client-side screenshot block is not a lock.** `FLAG_SECURE` on Android
+  and a secure window where the platform supports one raise the cost of a casual
+  screenshot. That code is **not written yet** — it is item 2 in
+  [ROADMAP.md](ROADMAP.md) — so today the honest statement is that the client
+  does not attempt it. It would not stop anyone with a camera, a second device,
+  or a modified client, and this document will not pretend otherwise when it
+  lands.
 - **An administrator can read any file the server can read.** That is the
   definition of the role on a single-user server.
 - **A stolen refresh token is a valid login** until it is used or revoked. The
@@ -328,14 +330,27 @@ one that matters — the account is *named* `phuree`, it is created by an
 explicit operator action rather than by the code, and it is never written down
 in the source.
 
-`must_change_password` exists, is set by an administrative password reset, is
-reported in every token response, and the client shows the change-password
-screen when it is set. `auth.require_password_change` in the config is
-currently a policy switch for that flag rather than a hard block on mutations;
-the block itself (`require_uncapped` in `api/deps.py`) is written but not yet
-wired to the mutating routers. That gap is deliberate and visible rather than
-implied: an account on a known-weak password can still change its own state
-until the block is enabled.
+`must_change_password` exists, is set by `add-user --must-change-password` and
+by an administrative password reset, is reported in every token response, and
+the client shows the change-password screen when it is set.
+
+**The block is enforced.** `require_uncapped` in `api/deps.py` refuses a
+mutation — and the streaming GET, which records "started watching" — from any
+account that still owes the change, with 403 and
+`X-Requires-Password-Change: true`. Every mutating route takes it, including
+every admin route, and `tests/test_client_routes.py` walks the routers and
+fails if one does not. Reads stay open, because the client has to be able to
+render the library in order to show the change-password screen at all.
+
+Two allowances, both deliberate:
+
+- **Administrators are exempt.** The documented first-run is
+  `add-user --admin`, which leaves the flag set and which has no
+  change-password flow; gating administrators would leave the person who has to
+  fix the server permanently unable to stream anything.
+- **Login, refresh, logout, logout-all and password change are not gated.** A
+  gated account must be able to sign out and change its password, or the gate
+  is a lock rather than a prompt.
 
 ## Operational hardening
 

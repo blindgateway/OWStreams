@@ -4,10 +4,12 @@ A personal media server and a Qt 6 / QML client for it. A small server that
 holds your library, your accounts and your per-profile state; a client that
 runs on a desktop, a phone, and eventually a TV.
 
-**Status.** The server is complete and tested: 497 tests, no stubs, no TODOs in
-core functionality. The client is not built yet — see [ROADMAP.md](ROADMAP.md).
-Nothing in this repository is a mock-up or a placeholder; what is missing is
-stated plainly rather than faked.
+**Status.** Both halves are built and tested: the server at 602 tests, the
+client at 94 across 8 suites — of which fifteen run the client against a real
+server rather than a canned response. No stubs, no TODOs in core functionality.
+Packaging and the screenshot comparison are outstanding; see
+[ROADMAP.md](ROADMAP.md). Nothing here is a mock-up or a placeholder, and what
+is missing is stated plainly rather than faked.
 
 ## What works today
 
@@ -37,8 +39,15 @@ stated plainly rather than faked.
   audit log, backup, restore, vacuum, health.
 - **Privacy and safety** — see [SECURITY.md](SECURITY.md), including an honest
   account of what the system does *not* protect against.
+- **The client** — nine screens behind a responsive shell that is a sidebar on
+  desktop, a rail on tablet and a bottom bar on phone; a player with resume,
+  subtitles, audio-track selection and seek; a session machine that survives the
+  server going away mid-session; and credentials in the platform keychain rather
+  than a preferences file. See [ROADMAP.md](ROADMAP.md) for the full list.
 
 ## Quick start
+
+**Server**
 
 ```bash
 cd backend
@@ -58,6 +67,18 @@ streamserver scan --root /srv/media/movies
 streamserver list
 ```
 
+**Client**
+
+```bash
+cd client
+cmake -S . -B build -G Ninja
+cmake --build build
+./build/stream-client
+```
+
+The client asks for a server address on first run. `qmllint` runs as part of
+every build and fails it on any warning.
+
 Full instructions in [DEPLOYMENT.md](DEPLOYMENT.md); development setup in
 [DEVELOPMENT.md](DEVELOPMENT.md).
 
@@ -65,7 +86,7 @@ Full instructions in [DEPLOYMENT.md](DEPLOYMENT.md); development setup in
 
 ```
 backend/     the server — Python, FastAPI, SQLite
-client/      the Qt 6 / QML application (not built yet)
+client/      the client — Qt 6 Quick, QML, C++ core, CMake
 docs/        this documentation
 scripts/     small maintenance utilities
 ```
@@ -91,11 +112,12 @@ scripts/     small maintenance utilities
 A few things this project will not do, because they would be worse than the
 alternative:
 
-- **No external DRM, no anti-piracy service.** The client blocks screenshots
-  and screen capture where the platform allows it, keeps credentials in the
-  platform's secure storage, and does not log them. It does **not** claim to
-  make the content unrecordable, because no client-side code can. The limits
-  are documented rather than papered over.
+- **No external DRM, no anti-piracy service.** The client keeps credentials in
+  the platform's secure storage and does not log them. Screenshot blocking is
+  listed but not yet written, and even once it is it does **not** make the
+  content unrecordable, because no client-side code can; the limits are
+  documented rather than papered over. See
+  [SECURITY.md](SECURITY.md#what-this-system-does-not-protect-against).
 - **No microservices.** One Python process, one SQLite file. At ten concurrent
   users on four cores, a message queue would add failure modes and no capacity.
 - **No cloud services, no accounts, no telemetry.** It runs on your hardware and

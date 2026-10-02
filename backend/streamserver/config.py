@@ -76,6 +76,13 @@ class AuthConfig:
     max_failed_logins: int = 8
     lockout_seconds: int = 300
     #: Force a password change for accounts still on the shipped default.
+    #:
+    #: Unused.  The *block* on mutations is not a policy switch -- it is
+    #: `require_uncapped` in `api/deps.py`, always on -- and the flag itself
+    #: was never read by anything.  It is left here because it is in the shipped
+    #: configuration file and removing it would change that file's contents; a
+    #: setting that claims to control something it does not is worse than an
+    #: absent one, so it is marked rather than quietly kept.
     require_password_change: bool = True
     password_min_length: int = 10
     #: Argon2id parameters would be preferable, but hashlib is in the standard

@@ -7,9 +7,11 @@ what is true of the code, so you do not have to rediscover it.
 
 ## State of the repository
 
-- `backend/` — **complete and tested.** 497 tests, no failures, no stubs, no
+- `backend/` — **complete and tested.** 602 tests, no failures, no stubs, no
   TODOs in core functionality.
-- `client/` — **not started.** Two empty directories.
+- `client/` — **builds, runs and is tested.** 94 tests across 8 suites, of
+  which 15 run against a real server. Packaging for Windows and Android, and
+  the screenshot comparison against the supplied references, are outstanding.
 - `docs/` — complete.
 
 Do not assume a feature is missing because it is hard to find. Do not assume it
@@ -20,11 +22,15 @@ were once wrong, and a test caught it. **Read the code.**
 
 ```bash
 cd backend
-python -m pytest        # must be green before you start
+python -m pytest                       # 602 tests, about 2m30s
+
+cd ../client
+cmake -S . -B build-test -G Ninja      # once
+cmake --build build-test && (cd build-test && ctest)   # 94 tests, seconds
 ```
 
-If it is not green on a clean checkout, that is a bug to report, not to work
-around.
+Both must be green before you start. If either is not green on a clean
+checkout, that is a bug to report, not to work around.
 
 ## Layout and layering
 
@@ -38,6 +44,13 @@ backend/streamserver/
 ├── security/            passwords, tokens, paths, audit, rate_limit
 ├── services/            auth, profiles, history, library, importer
 └── api/                 app, deps, errors, schemas, v1/
+
+client/
+├── src/                 apiclient, sessioncontroller, appcontroller,
+│                        playbackcontroller, the models, the access manager
+├── qml/                 Theme, App, Main, Shell, screens/, ui/
+├── tests/               one executable per suite, plus tests/e2e/
+└── lint.sh              runs qmllint; wired into the build as a POST_BUILD step
 ```
 
 **The rules, and they are load-bearing:**
@@ -56,6 +69,17 @@ backend/streamserver/
   CallerDep`, `profile_id: ProfileDep`, `admin: AdminDep`). A route that forgot
   a decorator is a bug; a route that forgot a parameter is visible in the
   signature. Keep it that way.
+- **A dependency that nothing takes is not a control.** `require_uncapped` was
+  written, documented and exported, and wired into nothing — so an account on
+  the shipped default password could rate, favourite, stream and write watch
+  history. Every mutating route now takes `UncappedCallerDep`, `require_admin`
+  sits on top of it, and `tests/test_client_routes.py` walks the routers and
+  fails if one comes back ungated.
+- **Per-profile routes take `OwnProfileDep`, not `ProfileDep`.** `ProfileDep`
+  falls back to the account's *first* profile when the request names none,
+  which is right for the catalogue and wrong for favourites, history, ratings
+  and the home rails: two people sharing an account would see each other's
+  lists.
 - **A foreign resource is 404, never 403.** The response must not confirm that
   somebody else's profile exists.
 - **No user input reaches SQL as syntax.** Sort columns and directions are
@@ -97,11 +121,22 @@ describes. A comment that restates the code is noise.
 - Assert the specific thing. "Does not raise" is not an assertion of correctness.
 - Hostile input is normal input: filenames, sidecars, ffprobe output and request
   bodies are all tested as if hostile, because all of them are.
-- No test may depend on wall-clock timing, the network, or a real media file.
-- `pyproject.toml` sets `-p no:xvfb`; that is not optional, see
-  [docs/TESTING.md](docs/TESTING.md).
+- No test may depend on wall-clock timing, the network, or a real media file —
+  with one deliberate exception: `client/tests/tst_e2e.cpp` starts the real
+  server over loopback on a real generated clip. It is not a unit test and does
+  not pretend to be; see [docs/TESTING.md](docs/TESTING.md).
+- `pyproject.toml` sets `-p no:xvfb`; that is not optional.
+- **Client: assert on the bytes.** A suite that drives the client against a
+  loopback server and reads what it *sent* is the only kind that can see a
+  request which is wrong. `client/tests/tst_apiclient.cpp` and
+  `client/tests/tst_e2e.cpp` between them found nine defects the deciding-suites
+  could not: four requests the server rejected with 422, a profile header that
+  was never sent, two routes whose id is not where the client read it from, an
+  empty stream URL, and an unenforced password gate.
+- Every suite is `QTEST_GUILESS_MAIN`. `QTEST_MAIN` aborts on a headless
+  machine, which reports as "Subprocess aborted" rather than as a failure.
 
-Run the whole suite before committing. It takes about a minute.
+Run both suites before committing.
 
 ## Documentation
 
@@ -120,8 +155,10 @@ check which, and fix it. That has happened more than once here.
 2. Add the route to the right module in `api/v1/`. Use the path-parameter
    aliases (`MediaPathId`, `ProfilePathId`, `AdminId`) so an id of 0 or -1 is a
    422 rather than a pointless lookup.
-3. Take `caller: CallerDep` (and `profile_id: ProfileDep` where relevant) as a
-   parameter. Return 404 for a resource owned by somebody else.
+3. Take `caller: CallerDep` as a parameter, `profile_id: OwnProfileDep` where
+   the answer is per profile and `ProfileDep` where it is not, and
+   `caller: UncappedCallerDep` on anything that mutates. Return 404 for a
+   resource owned by somebody else.
 4. Put the SQL in `repositories.py`, the rule in `services/`, the shape in
    `schemas.py`.
 5. Audit it if it is a security-relevant action, using a name from
@@ -154,5 +191,6 @@ with real PINs; no client-side authorization; no external DRM; no cloud
 services; a UI that must not look generated; screenshot-driven iteration
 against supplied references; real end-to-end testing, not just unit tests.
 
-The client's UI has not been built. That is the outstanding work, and
-[docs/ROADMAP.md](docs/ROADMAP.md) sequences it.
+The client's UI is built and tested; what remains is packaging for Windows and
+Android, and the screenshot comparison against the supplied references.
+[docs/ROADMAP.md](docs/ROADMAP.md) sequences the rest.

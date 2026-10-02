@@ -6,7 +6,7 @@ started, and the list says so.
 
 ## Done
 
-**Server — complete and tested (497 tests, no failures).**
+**Server — complete and tested (602 tests, no failures).**
 
 - Layered configuration, validation, and a `0600` config file
 - SQLite schema: 24 tables, 3 migrations, FTS5 search, WAL
@@ -26,7 +26,46 @@ started, and the list says so.
 - Range streaming with the full RFC 9110 grammar
 - HTTP Range streaming, progress reporting, resume
 - 14 CLI subcommands sharing the same services as the API
-- 497 tests: unit, integration, API, security, media, CLI
+- 602 tests: unit, integration, API, security, media, CLI
+
+**Client — builds, runs, and is tested (94 tests across 8 suites).**
+
+Qt 6 Quick / QML, C++ core, CMake. Verified on this machine (Qt 6.11.2 devel
+packages, CMake 4.3.0, Ninja); `qmllint` runs as a `POST_BUILD` step and fails
+the build on any warning.
+
+- **Build and structure.** `qt_add_qml_module`, `qt_standard_project_setup`,
+  `QT_NO_CAST_FROM_ASCII`, `pragma Singleton` for the theme, one `Stream` QML
+  module for the C++ types.
+- **Design system.** `qml/Theme.qml` — one amber accent, three dark surfaces, a
+  4 px spacing scale, five type sizes, three radii, three motion durations.
+  Light and dark. No gradients, no glassmorphism, no purple-on-dark, no default
+  Qt controls.
+- **HTTP client.** `ApiClient` with transparent token refresh and replay, one
+  `ApiError` taxonomy for every documented error code, and a
+  `CredentialAccessManager` that attaches a bearer token *only* to the artwork
+  and streaming routes — the two `Image` and the media backend fetch by URL and
+  cannot be given a header.
+- **Secure credential storage.** `CredentialStore` over the platform keychain
+  (libsecret, Windows Credential Manager, macOS Keychain), never a preferences
+  file, with the remembered server URL stored alongside it.
+- **Session state machine.** `SessionController` — no server, connecting,
+  login, forced password change, profiles, PIN unlock, home, and back, with the
+  server-unreachable and mid-session-loss paths designed rather than dialogged.
+- **Screens.** Server, login, change password, profile picker, home, library,
+  search, detail, player, settings — nine screens, each with real loading, empty
+  and error states.
+- **Responsive shell.** Sidebar on desktop, rail on tablet, bottom bar on
+  phone: three arrangements of one component tree.
+- **Player.** `QMediaPlayer` with play/pause, seek, resume, volume, fullscreen,
+  subtitle and audio selection, buffering and error states, next/previous, and
+  a progress report every fifteen seconds of *watching*.
+- **Models.** `MediaListModel` (paged, sortable, filtered), `HomeScreenModel`
+  (eight rails from one request), `PlaybackController`.
+- **Tests.** 79 unit assertions over seven suites, plus `tst_e2e.cpp`: fifteen
+  tests against the *production* server, started by `tests/e2e/harness.py` with
+  a real config file, a real database, a real account and a real clip ffmpeg
+  generated. It found nine defects the other suites could not.
 
 **Documentation — complete.**
 
@@ -35,55 +74,29 @@ started, and the list says so.
 
 ## Not started
 
-**The client. `client/` contains two empty directories.**
+In order, with what each one needs.
 
-This is the largest remaining piece and the reason the project is not finished.
-Qt 6 Quick and QML, C++ core, one codebase for desktop, tablet and phone.
-
-### Client, in order
-
-1. **Skeleton and build.** `CMakeLists.txt`, `main.cpp`, a `qt_add_qml_module`,
-   and a verified configure-and-build on this machine (Qt 6.11.2 devel packages
-   are installed and a trivial QML app compiles and links).
-2. **HTTP API client in C++.** `QNetworkAccessManager` with a refresh-token
-   interceptor, typed models over the v1 API, and an error taxonomy that maps
-   every documented `error` code to a user-facing state. No sleeps, no
-   polling where a signal will do.
-3. **Secure credential storage.** Platform keychain/Keystore, never a plain
-   preferences file. Server URL remembered per profile with the certificate
-   policy stored alongside it.
-4. **First-run flow.** Server configuration → login → setup (if the server says
-   setup is required) → profile creation and selection → PIN.
-5. **Design system.** One place defining colour, type scale, spacing, radii,
-   motion and elevation; dark and light; no gradients, no glassmorphism, no
-   purple-on-dark, no default-Qt-looking controls. Established before any
-   screen is written, because retrofitting consistency is what produces the
-   generic look the brief explicitly rejects.
-6. **Navigation shell.** Sidebar on desktop, rail on tablet, bottom bar on
-   phone — three arrangements of one component tree, not three UIs.
-7. **Home.** Continue watching, recently added, recommended, favourites,
-   popular, categories, recently watched. One request (`GET /library/home`), and
-   every rail has a real loading, empty and error state.
-8. **Library and search.** Browse with filters, detail screen with the full
-   metadata record, cast, similar titles, audio/subtitle track pickers.
-9. **Player.** `QMediaPlayer` with play/pause, seek, resume, volume, fullscreen,
-   subtitle and audio selection, buffering and error states, next/previous.
-10. **Settings and account management.** Server configuration, account, password,
-    profiles, PINs, active sessions, logout.
-11. **Resilience.** Server unreachable, timeout, DNS failure, TLS failure,
-    network change mid-stream, expired session, wrong PIN, missing media file —
-    each with a designed state, not a dialog.
-12. **Client-side protections.** Screenshot blocking and `FLAG_SECURE` where the
-    platform allows; documented limits where it does not.
-13. **Packaging.** Linux, Windows 10+, Android 12+.
-
-### After the client
-
-- Series and season support in the UI (the schema already has `content_type` and
-  `parent_media_id`; `media_seasons` is a future migration)
-- Recommendations tuned against real usage
-- Android TV
-- Transcoding — explicitly *not* planned; see below
+1. **Packaging.** Linux first (the deployment target is a Fedora 44 server), then
+   Windows 10+ and Android 12+. Needs `qt_deploy_runtime_dependencies`, an
+   icon, and a per-platform install target. The client currently builds and
+   runs from the source tree and nothing more.
+2. **Client-side protections.** Screenshot blocking and `FLAG_SECURE` where the
+   platform allows it, with the limits documented where it does not. The
+   brief is explicit that a limitation must be documented rather than papered
+   over: a desktop screenshot is a desktop screenshot, and the honest claim is
+   "raises the cost of an accidental capture", not "prevents capture".
+3. **The full acceptance walkthrough**, every failure case in the brief run
+   against a packaged build rather than from the source tree.
+4. **Screenshot comparison** against the supplied references, iterating until
+   they match. Blocked on the references: no image has been supplied yet, so
+   the visual design has been built to the brief's stated constraints and not
+   yet checked against anything.
+5. **Series and season support in the UI.** The schema already has
+   `content_type` and `parent_media_id`; `media_seasons` is a future migration.
+6. **Recommendations tuned against real usage.** The rails are populated from
+   the local heuristics the server implements; nothing has been tuned against a
+   real viewing history, because there is not one yet.
+7. **Android TV.** Architected for, not built.
 
 ## Deliberately not planned
 
@@ -106,17 +119,3 @@ dishonest.
 **Multi-writer scaling.** SQLite in WAL mode is a single-writer design. If this
 ever needed to run as several writer hosts, the repositories are the only thing
 that would change — the SQL is already isolated in one module.
-
-## Sequenced next steps
-
-1. Client skeleton and a green build.
-2. API client and secure storage.
-3. Design system.
-4. First-run, login and profile flows — the acceptance script in the brief
-   starts here.
-5. Home and library.
-6. Player and resume.
-7. The full acceptance walkthrough, with every failure case in it.
-8. Screenshot comparison against the supplied references, iterating until they
-   match.
-9. Windows and Android builds.
