@@ -276,6 +276,12 @@ void ApiClient::handle(QNetworkReply *reply, const Pending &pending)
             m_playbackToken = object.value(QStringLiteral("playback_token")).toString();
             m_playbackSessionId = object.value(QStringLiteral("session_id")).toString();
             m_playbackMediaId = pending.body.value(QStringLiteral("media_id")).toInt();
+            // The URL is deliberately bare.  The server accepts an access
+            // token *or* a playback token in the header, and the playback
+            // token is the narrower one -- it is bound to this title and to
+            // this profile, and the stream route enforces that binding.  The
+            // media backend cannot send a header, so the access token rides
+            // along in one instead; see CredentialAccessManager.
             emit playbackStarted(m_playbackMediaId,
                                  streamUrl(m_playbackMediaId).toString(),
                                  object.value(QStringLiteral("start_offset")).toDouble(),

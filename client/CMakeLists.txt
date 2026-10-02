@@ -28,6 +28,8 @@ qt_add_executable(stream-client
     src/homescreenmodel.h
     src/appcontroller.cpp
     src/appcontroller.h
+    src/playbackcontroller.cpp
+    src/playbackcontroller.h
 )
 
 target_compile_definitions(stream-client PRIVATE
@@ -42,27 +44,43 @@ set_source_files_properties(qml/Theme.qml PROPERTIES QT_QML_SINGLETON_TYPE TRUE)
 set_source_files_properties(qml/ui/Responsive.qml PROPERTIES QT_QML_SINGLETON_TYPE TRUE)
 set_source_files_properties(qml/App.qml PROPERTIES QT_QML_SINGLETON_TYPE TRUE)
 
+# `STREAM_QML_FILES` is also the list the linter runs over, so a new screen
+# cannot be written without being linted.  See client/lint.sh for the flags.
+#
+# A warning is an error here.  QML's mistakes -- an unqualified identifier, a
+# renamed property, a type that does not exist -- are runtime failures that the
+# compiler cannot see, so the linter is the only thing standing between a typo
+# and a blank screen.  Two kinds are exempted and neither is a QML defect:
+# `pragma Singleton` files (the linter parses them in singleton mode and then
+# resolves unqualified uses of them anyway), and the deliberately-unqualified
+# context properties, which the `App` singleton exists to replace.
+set(STREAM_QML_FILES
+    qml/Main.qml
+    qml/Shell.qml
+    qml/Theme.qml
+    qml/App.qml
+    qml/ui/Responsive.qml
+    qml/ui/AppButton.qml
+    qml/ui/AppTextField.qml
+    qml/ui/Icon.qml
+    qml/ui/NavItem.qml
+    qml/ui/PosterCard.qml
+    qml/ui/PosterRail.qml
+    qml/ui/StatusPane.qml
+    qml/ui/ChangePasswordScreen.qml
+    qml/screens/ServerScreen.qml
+    qml/screens/LoginScreen.qml
+    qml/screens/ProfileScreen.qml
+    qml/screens/HomeScreen.qml
+    qml/screens/MediaGridScreen.qml
+    qml/screens/SearchScreen.qml
+    qml/screens/DetailScreen.qml
+)
+
 qt_add_qml_module(stream-client
     URI Stream
     VERSION 1.0
-    QML_FILES
-        qml/Main.qml
-        qml/Theme.qml
-        qml/App.qml
-        qml/ui/Responsive.qml
-        qml/ui/AppButton.qml
-        qml/ui/AppTextField.qml
-        qml/ui/Icon.qml
-        qml/ui/NavItem.qml
-        qml/ui/PosterCard.qml
-        qml/ui/PosterRail.qml
-        qml/ui/StatusPane.qml
-        qml/screens/ServerScreen.qml
-        qml/screens/LoginScreen.qml
-        qml/screens/ProfileScreen.qml
-        qml/screens/HomeScreen.qml
-        qml/screens/MediaGridScreen.qml
-        qml/screens/SearchScreen.qml
+    QML_FILES ${STREAM_QML_FILES}
 )
 
 target_include_directories(stream-client PRIVATE src)

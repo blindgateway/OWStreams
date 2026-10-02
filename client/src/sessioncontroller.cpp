@@ -64,6 +64,15 @@ SessionController::SessionController(QObject *parent)
 
     connect(m_api, &ApiClient::loggedOut, this, [this] { setState(Login); });
 
+    // The picker and the settings screen both read the cached profile list, so
+    // anything that changes it has to re-notify here.
+    connect(m_api, &ApiClient::profilesChanged, this,
+            &SessionController::profilesChanged);
+    connect(m_api, &ApiClient::userChanged, this,
+            &SessionController::userChanged);
+    connect(m_api, &ApiClient::sessionsChanged, this,
+            &SessionController::sessionsChanged);
+
     connect(m_api, &ApiClient::failed, this,
             [this](const QString &operation, const ApiError &error) {
                 if (operation == QLatin1String("auth.me")
@@ -89,6 +98,8 @@ SessionController::SessionController(QObject *parent)
     connect(m_api, &ApiClient::serverChecked, this,
             [this](bool reachable, const QString &version, const QString &,
                    bool requiresSetup) {
+                m_serverVersion = version;
+                emit serverInfoChanged();
                 emit serverReachable(reachable, version, requiresSetup);
                 if (!reachable) {
                     m_lastError = QStringLiteral("Could not reach that server.");
@@ -107,6 +118,10 @@ SessionController::SessionController(QObject *parent)
 }
 
 QString SessionController::serverUrl() const { return m_api->baseUrl(); }
+QString SessionController::credentialBackend() const
+{
+    return m_credentials->backendName();
+}
 QString SessionController::username() const { return m_api->username(); }
 int SessionController::profileId() const { return m_api->profileId(); }
 bool SessionController::hasSecureStorage() const { return m_credentials->isAvailable(); }
@@ -138,7 +153,47 @@ void SessionController::signIn(const QString &username, const QString &password,
     m_lastError.clear();
     m_remembered = remember;
     m_credentials->setLastAccount(username.trimmed());
-    m_api->login(username, password, QStringLiteral("Stream client"), remember);
+    // The device name is what the account's session list shows, so a person
+    // ending a session knows which one.  The hostname alone does not
+    // distinguish a phone from a laptop on the same desk.
+    m_api->login(username, password, m_deviceName, remember);
+}
+
+void SessionController::setDeviceName(const QString &name)
+{
+    m_deviceName = name;
+}
+
+void SessionController::createProfile(const QString &name, const QString &pin)
+{
+    m_api->createProfile(name, pin);
+}
+
+void SessionController::renameProfile(int profileId, const QString &name)
+{
+    m_api->renameProfile(profileId, name);
+}
+
+void SessionController::deleteProfile(int profileId)
+{
+    m_api->deleteProfile(profileId);
+}
+
+void SessionController::setProfilePin(int profileId, const QString &pin,
+                                      const QString &currentPin)
+{
+    m_api->setProfilePin(profileId, pin, currentPin);
+}
+
+void SessionController::changeProfilePin(int profileId, const QString &currentPin,
+                                         const QString &newPin)
+{
+    m_api->changeProfilePin(profileId, currentPin, newPin);
+}
+
+void SessionController::loadSessions()
+{
+    m_api->loadSessions();
 }
 
 void SessionController::signOut()
