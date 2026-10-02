@@ -704,6 +704,11 @@ void ApiClient::setFavorite(int mediaId, bool favorite)
 
 void ApiClient::rateMedia(int mediaId, double score)
 {
+    // `/library/media/{id}/rating`, not `/media/{id}/rating`: ratings are
+    // served by the *library* router, and only it.  The distinction is not
+    // cosmetic -- `/media/{id}/...` is the playback and artwork root, so a
+    // rating sent there is a 404, and `AppController::setRating` has no error
+    // path for one, which is how a rating can silently do nothing.
     Pending request;
     request.verb = "PUT";
     request.path = kApiRoot + QStringLiteral("/library/media/") +
