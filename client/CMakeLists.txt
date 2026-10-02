@@ -26,11 +26,12 @@ target_compile_definitions(stream-client PRIVATE
     QT_NO_CAST_FROM_ASCII
 )
 
-# Theme is a singleton: one instance, one source of truth.  Without this,
-# every `Theme` reference would construct a fresh QtObject and the tokens
-# would not be shared.  The property has to be set before the module is
-# declared: qt_add_qml_module reads it while collecting the file list.
+# Singletons: one instance, one source of truth.  Without this, every
+# `Theme`/`Responsive` reference would construct a fresh QtObject and the
+# tokens would not be shared.  The properties have to be set before the module
+# is declared: qt_add_qml_module reads them while collecting the file list.
 set_source_files_properties(qml/Theme.qml PROPERTIES QT_QML_SINGLETON_TYPE TRUE)
+set_source_files_properties(qml/ui/Responsive.qml PROPERTIES QT_QML_SINGLETON_TYPE TRUE)
 
 qt_add_qml_module(stream-client
     URI Stream
@@ -38,6 +39,12 @@ qt_add_qml_module(stream-client
     QML_FILES
         qml/Main.qml
         qml/Theme.qml
+        qml/ui/Responsive.qml
+        qml/ui/AppButton.qml
+        qml/ui/AppTextField.qml
+        qml/ui/PosterCard.qml
+        qml/ui/PosterRail.qml
+        qml/ui/StatusPane.qml
 )
 
 target_include_directories(stream-client PRIVATE src)
