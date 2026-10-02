@@ -39,14 +39,17 @@ Item {
     signal previousRequested()
     signal fullscreenRequested()
 
-    // The controller's enum, spelled as numbers because the type is not
-    // registered with QML: PlaybackController.Idle, .Preparing, .Buffering,
-    // .Playing, .Paused, .Stopped, .Error in that order.  Registering the type
-    // (see the report) replaces these with named values.
-    readonly property bool preparing: controller !== null
-                                      && (controller.state === 0 || controller.state === 1)
-    readonly property bool buffering: controller !== null && controller.state === 2
-    readonly property bool failed: controller !== null && controller.state === 6
+    // Named enum values, not numbers.  `PlaybackController` carries QML_ELEMENT
+    // now, so the linter resolves these -- and a number here would be a silent
+    // break the moment somebody inserted a state above Buffering.
+    readonly property bool preparing:
+        controller !== null
+        && (controller.state === PlaybackController.Idle
+            || controller.state === PlaybackController.Preparing)
+    readonly property bool buffering:
+        controller !== null && controller.state === PlaybackController.Buffering
+    readonly property bool failed:
+        controller !== null && controller.state === PlaybackController.Error
     readonly property bool controlsUp: controller === null || controller.controlsVisible
 
     readonly property string posterUrl: controller && controller.posterUrl

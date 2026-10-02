@@ -430,11 +430,11 @@ void PlaybackController::setVolume(double value)
         m_audioOutput->setVolume(float(value));
     emit volumeChanged();
 
-    // Turning the volume up off zero is unmute, and leaving it muted while the
-    // slider reads 60% means the picture and the state disagree about whether
-    // there is sound.  The other direction does *not* unmute: dragging to zero
-    // and back up is a thing people do on purpose, and a player that un-mutes
-    // itself there is a player that surprises you.
+    // Turning the volume up unmutes, because a slider reading 60% while the
+    // mute toggle says "muted" is a picture and a state that disagree about
+    // whether there is sound.  Coming back *down* to zero does not mute:
+    // dragging to zero and back up is a thing people do on purpose, and a
+    // player that mutes itself there is a player that surprises you.
     if (value > 0.0 && m_muted)
         setMuted(false);
 }
