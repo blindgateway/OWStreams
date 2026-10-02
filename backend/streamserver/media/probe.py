@@ -435,14 +435,15 @@ def _language(primary: Any, fallback: Any) -> str | None:
 
 
 def _hdr_format(tags: dict[str, Any], stream: dict[str, Any]) -> str | None:
-    """Detect HDR from the colour-transfer side data or the container tag."""
+    """Detect HDR from the colour-transfer side data or the container tag.
+
+    PQ (``smpte2084``) and HLG (``arib-std-b67``) are *both* HDR10-family
+    transfer functions, so either one means HDR10.  Whether the source is a
+    Dolby Vision master is not derivable from either value -- it needs the
+    side-data block -- so it is not claimed here.
+    """
     transfer = _clean(stream.get("color_transfer"))
-    primaries = _clean(stream.get("color_primaries"))
-    if transfer in {"arib-std-b67", "smpte2084"}:
-        if primaries == "bt2020":
-            return "HDR10+"
-        return "HDR10"
-    if (transfer or "").lower() in {"smpte2084", "arib-std-b67"}:
+    if transfer and transfer.lower() in {"smpte2084", "arib-std-b67"}:
         return "HDR10"
     for key in ("HDR", "hdr", "hdr_format", "MASTERING_DISPLAY_METADATA"):
         value = _clean(tags.get(key))

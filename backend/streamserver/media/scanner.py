@@ -121,33 +121,69 @@ def iter_media_files(
                 continue
             if extensions and Path(entry.name).suffix.lower() not in extensions:
                 continue
-            yield Path(entry.path)
+            candidate = Path(entry.path)
+            # An empty file is a stub, a failed copy or an artefact of an
+            # interrupted transfer.  Yielding it would create a library row
+            # that can never stream.
+            try:
+                if entry.stat(follow_symlinks=False).st_size == 0:
+                    log.debug("skipping empty file %s", candidate)
+                    continue
+            except OSError:
+                continue
+            yield candidate
 
 
 def find_sidecars(media_path: Path) -> list[Path]:
-    """Metadata files sitting next to ``media_path``.
+    """Metadata files belonging to ``media_path``.
 
-    Two conventions are supported: ``<name>.nfo`` and ``<name>/*.json`` -- the
-    latter being how Plex and Emby organise per-title extras.
+    Two conventions are supported: ``<name>.nfo`` next to the file, and
+    ``<name>/movie.nfo`` inside a folder named after the title -- the latter
+    being how Plex and Emby organise per-title extras.
     """
     sidecars: list[Path] = []
-    try:
-        for suffix in SIDECAR_EXTENSIONS:
-            candidate = media_path.with_suffix(suffix)
-            if candidate.exists() and candidate.is_file():
+    seen: set[Path] = set()
+
+    def offer(candidate: Path) -> None:
+        try:
+            if candidate.is_file() and candidate not in seen:
+                seen.add(candidate)
                 sidecars.append(candidate)
-        artwork_dir = media_path.parent / media_path.stem
-        if artwork_dir.is_dir():
+        except OSError as exc:
+            log.debug("cannot stat sidecar %s: %s", candidate, exc)
+
+    try:
+        # "Movie.2020.mkv" -> "Movie.2020.nfo".  ``Path.with_suffix`` replaces
+        # only the *last* suffix and rejects a dotted one, so the candidate
+        # stems are built by slicing the name instead: "Movie.2020.part1.mkv"
+        # is probed both as "...part1.nfo" and as "Movie.2020.nfo".
+        name = media_path.name
+        stems = [media_path.with_name(name)]
+        dot = name.find(".")
+        while dot > 0:
+            stems.append(media_path.with_name(name[:dot]))
+            nxt = name.find(".", dot + 1)
+            if nxt == -1:
+                break
+            dot = nxt
+        for stem in stems:
+            for suffix in SIDECAR_EXTENSIONS:
+                offer(stem.with_name(stem.name + suffix))
+        # Per-title folders.  ``Path.stem`` drops only the *last* suffix, so
+        # "Movie.2020.mkv" would look for "Movie.2020/" while the layout in the
+        # wild is "Movie/"; every already-collected candidate stem is tried as a
+        # directory name, longest first so the most specific one wins.
+        for folder in [media_path.parent / s.name for s in stems] + [media_path]:
+            if not folder.is_dir():
+                continue
             for suffix in (".nfo", ".json"):
-                candidate = artwork_dir / f"{suffix.lstrip('.')}"
                 for probe in (
-                    artwork_dir / f"movie{suffix}",
-                    artwork_dir / f"info{suffix}",
-                    artwork_dir / f"{suffix}",
+                    folder / f"movie{suffix}",
+                    folder / f"info{suffix}",
+                    folder / f"{suffix.lstrip('.')}{suffix}",
+                    folder / suffix,
                 ):
-                    if probe.exists() and probe.is_file() and probe not in sidecars:
-                        sidecars.append(probe)
-                        break
+                    offer(probe)
     except OSError as exc:
         log.debug("cannot list sidecars for %s: %s", media_path, exc)
     return sidecars
