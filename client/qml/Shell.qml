@@ -290,7 +290,15 @@ Item {
         anchors.left: parent.left
         anchors.right: parent.right
         anchors.bottom: parent.bottom
-        height: 58 + (Screen.desktopAvailableHeight > 0 ? 0 : 0)
+        // 58, full stop.  The expression this replaces was
+        // `58 + (Screen.desktopAvailableHeight > 0 ? 0 : 0)`, which is 58 on
+        // every platform -- a term that multiplies by zero is either a
+        // forgotten conditional or a layout that was meant to grow and never
+        // did.  If the bar ever does need to be taller, `Responsive` is where
+        // the decision belongs; `Screen.desktopAvailableHeight` also pulls a
+        // second screen's metrics into a phone's layout, which changes with
+        // where the window is.
+        height: 58
         color: Theme.surface
 
         Rectangle {
