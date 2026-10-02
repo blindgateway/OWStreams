@@ -6,7 +6,7 @@ python -m pytest          # 607 tests, about 2m30s
 
 cd ../client
 cmake -S . -B build-test -G Ninja && cmake --build build-test
-(cd build-test && ctest)  # 113 tests, seconds
+(cd build-test && ctest)  # 116 tests, seconds
 ```
 
 Every server test runs offline, needs no root, and touches no network. The
@@ -316,8 +316,8 @@ Every one of these was a real defect in code that looked correct:
 
 `client/tests/tst_e2e.cpp` runs the client against the production server —
 the real config file, a real database with its own signing key, a real
-account, and a library holding a clip ffmpeg generated — and found nine
-defects that every other suite had passed:
+account, and a library holding a clip ffmpeg generated *and its sidecar* — and
+has found fourteen defects that every other suite had passed:
 
 - **Four requests were answered 422.** Favourites, ratings, progress reports
   and playback start each sent ids in a body; every body is a `StrictModel`
@@ -337,11 +337,39 @@ defects that every other suite had passed:
   playable source" for a title the server had just authorised.
 - **Unlocking a PIN profile announced profile 0**, and `selectProfile` adopted
   it — so unlocking signed you in as no profile at all.
+- **Choosing a profile sent its id to nobody.** `profileSelected` carried it,
+  the session controller remembered it, went to Home, and never called
+  `setProfileId` — so the `X-Profile-Id` header went out as `0` and the server
+  refused every profile-scoped read. Picking a profile produced an app that
+  could not read its own library.
+- **Every failure in the app was the same failure.** `handle()` read the reply
+  and `errorFrom()` read it again; a `QNetworkReply` hands out its buffer once,
+  so the second read was empty, the parse failed on it, and the parse failure
+  overwrote a status that had been read correctly. A refused connection, a 403
+  for a foreign profile and a wrong PIN all arrived as `Unknown`, status 0,
+  and the message "the server sent a response this app could not read". Three
+  mistakes sat on top of that one: `kindForStatus` ran on status 0 and made
+  every dead connection non-retryable; an unparseable body had its status
+  cleared and then unconditionally restored; and a 401 with no refresh token
+  to spend fell through both paths and raised no signal at all.
+- **A categories request that failed took the library down with it**, because
+  every failure also set the global `lastError` — which sits above every
+  screen, including the ones that failure did not touch.
 
 None of these is visible from the response: a 2xx arrives, the model updates,
 and the only symptom is that nothing is ever persisted. The regression tests
-for all nine are in the suite — four in `tst_apiclient.cpp` (which asserts on
-the bytes) and the rest here and in the client suites.
+are in the suite — four in `tst_apiclient.cpp` (which asserts on the bytes) and
+the rest here and in the client suites.
+
+Two things about the fixture itself are worth recording, because both made a
+test pass vacuously or fail for the wrong reason. The generated clip had no
+sidecar, so `/library/categories` answered `{"genres": []}` and every filtering
+assertion passed against nothing — the one thing that would have caught the
+missing categories *handler* was the one thing the fixture never provided. And
+the PIN bucket is six a minute in production and the suite makes more unlocks
+than that against one profile, so the harness raises it; the server's refusal
+of a drained bucket is asserted in `test_pin_attempts_are_throttled`, against
+the production number.
 
 ## The QML, and how it is checked
 
@@ -371,14 +399,20 @@ Stated plainly, because a test suite that pretends is worse than none.
 
 - **QML behaviour.** The C++ behind the client is tested — the session machine,
   the models, the player, the bytes on the wire, and the whole app against a
-  real server. The QML is checked two ways, and both are static:
-  `qmllint` on every build, which is a syntax, type and property check; and
-  starting the application, which is how `NavItem.qml`'s `Row` was found
-  anchoring its children — a runtime warning Qt emits once per frame, which no
-  linter reports and no unit test sees. Nothing *renders* an `Item` and asserts
-  on it, and the end-to-end suite drives the controllers the QML binds to
-  rather than the QML, so a binding that is wired to the wrong property would
-  not be caught by it.
+  real server. The QML is checked three ways, and only one of them is a test:
+  `qmllint` on every build, which is a syntax, type and property check;
+  *running* the application and reading what Qt logged, which is how six more
+  defects were found — `Icon.qml`'s `Connections` bound to the wrong item, so
+  no icon ever repainted; `HomeScreenModel::rails()` called as a function from
+  QML where it is a `QList` property; `Responsive.window` typed `Item` and
+  assigned an `ApplicationWindow`, so every responsive breakpoint read
+  `undefined`; `PosterRail`'s `implicitHeight` built from a row anchored to it,
+  which Qt dropped as a binding loop; and two `visible` bindings that read
+  `undefined` where they needed `Boolean(...)`. Each was a screen that looked
+  plausible and had stopped working. Nothing *renders* an `Item` and asserts on
+  it, and the end-to-end suite drives the controllers the QML binds to rather
+  than the QML, so a binding wired to the wrong property is still not caught by
+  it — only by running the app and reading the log.
 - **Screenshot comparison.** No reference image has been supplied, so the
   visual design has been built to the brief's stated constraints and not
   checked against anything.

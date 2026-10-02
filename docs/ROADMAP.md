@@ -28,7 +28,7 @@ started, and the list says so.
 - 14 CLI subcommands sharing the same services as the API
 - 607 tests: unit, integration, API, security, media, CLI
 
-**Client — builds, runs, and is tested (113 tests across 11 suites).**
+**Client — builds, runs, and is tested (116 tests across 11 suites).**
 
 Qt 6 Quick / QML, C++ core, CMake. Verified on this machine (Qt 6.11.2 devel
 packages, CMake 4.3.0, Ninja); `qmllint` runs as a `POST_BUILD` step and fails
@@ -62,10 +62,11 @@ the build on any warning.
   a progress report every fifteen seconds of *watching*.
 - **Models.** `MediaListModel` (paged, sortable, filtered), `HomeScreenModel`
   (eight rails from one request), `PlaybackController`.
-- **Tests.** 98 unit assertions over ten suites, plus `tst_e2e.cpp`: fifteen
+- **Tests.** 98 unit assertions over ten suites, plus `tst_e2e.cpp`: eighteen
   tests against the *production* server, started by `tests/e2e/harness.py` with
   a real config file, a real database, a real account and a real clip ffmpeg
-  generated. It found nine defects the other suites could not.
+  generated, sidecar and all. It has found fourteen defects the other suites
+  could not — the last four of them in one commit, which is what it is for.
 - **Capture protection.** `CaptureGuard` keeps the player out of screenshots,
   screen recordings and taskbar previews on the two platforms whose system
   enforces it, and reports — in the settings screen, per device — exactly what
