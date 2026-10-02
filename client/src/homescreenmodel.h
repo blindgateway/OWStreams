@@ -122,6 +122,14 @@ public:
     /// the base, so a model filled before the server was known holds none.
     void setBaseUrl(const QUrl &url);
 
+    /// Ask the controller to re-fetch.  A signal, not a request: this model is
+    /// handed parsed rows and holds no transport.  `HomeScreen`'s header calls
+    /// it; before it existed the only way to reload the home screen was
+    /// `AppController::refresh`, which no screen called, so the home screen
+    /// showed whatever the first load returned until the application was
+    /// restarted.
+    Q_INVOKABLE void refresh();
+
     QList<HomeRail *> rails() const;
 
     void beginLoad();
@@ -133,6 +141,9 @@ signals:
     void failedChanged();
     void contentChanged();
     void baseUrlChanged();
+    /// The view asked for a reload.  The controller answers it, because the
+    /// controller owns the transport.
+    void refreshRequested();
 
 private:
     void dispatch(const QString &key, HomeRail *rail,

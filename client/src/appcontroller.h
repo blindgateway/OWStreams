@@ -56,10 +56,28 @@ class AppController : public QObject
     Q_PROPERTY(int libraryOffset READ libraryOffset NOTIFY libraryPageChanged)
     Q_PROPERTY(int libraryTotal READ libraryTotal NOTIFY libraryPageChanged)
     Q_PROPERTY(bool libraryHasMore READ libraryHasMore NOTIFY libraryPageChanged)
-    Q_PROPERTY(QString librarySort READ librarySort NOTIFY libraryPageChanged)
-    Q_PROPERTY(QString libraryGenre READ libraryGenre NOTIFY libraryPageChanged)
-    Q_PROPERTY(QString libraryYear READ libraryYear NOTIFY libraryPageChanged)
+    // Writeable, and the screen writes to them.  Each one was a pair --
+    // `setLibrarySort` beside a read-only `librarySort` -- and the pair is a
+    // trap: the method existed, a test proved the method worked, and the
+    // FilterBar was handing its result to a plain assignment that Qt
+    // discarded with a warning nobody reads.  Narrowing the library to 1994
+    // filtered nothing.  One writable property per filter, and a write *is*
+    // the request.
+    Q_PROPERTY(QString librarySort READ librarySort WRITE setLibrarySort
+                   NOTIFY libraryPageChanged)
+    Q_PROPERTY(QString libraryGenre READ libraryGenre WRITE setLibraryGenre
+                   NOTIFY libraryPageChanged)
+    Q_PROPERTY(QString libraryYear READ libraryYear WRITE setLibraryYear
+                   NOTIFY libraryPageChanged)
     Q_PROPERTY(int libraryPageSize READ libraryPageSize CONSTANT)
+    /// Number of pages already appended to the library grid, so a screen can ask
+    /// for the next one as the viewer nears the end of what is loaded.
+    ///
+    /// For a `GridView` whose height *is* its content height -- which is what
+    /// stops the nested scroll this screen had -- there is no inner scrollbar
+    /// and no `onReached`, so nothing was ever calling `loadMoreLibrary` and a
+    /// library of a thousand titles stopped at sixty, silently.
+    Q_PROPERTY(int pagesLoaded READ pagesLoaded NOTIFY libraryPageChanged)
     /// What the player is showing, or 0 when it is closed.  The player screen
     /// reads this rather than being handed an id, so a change of title while
     /// it is open cannot leave it pointing at the previous one.
@@ -111,6 +129,12 @@ public:
     QString libraryGenre() const { return m_libraryGenre; }
     QString libraryYear() const { return m_libraryYear; }
     int libraryPageSize() const { return kPageSize; }
+    int pagesLoaded() const
+    {
+        // At least one even at offset zero, so a screen gating on `> 0` still
+        // loads page one on an empty library.
+        return 1 + m_libraryOffset / kPageSize;
+    }
     QVariantMap filterOptions() const { return m_filterOptions; }
     int playerMediaId() const { return m_playerMediaId; }
     /// One player for the life of the app.  Constructed per title would mean a

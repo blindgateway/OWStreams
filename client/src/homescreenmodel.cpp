@@ -89,6 +89,14 @@ QList<HomeRail *> HomeScreenModel::rails() const
             m_popular, m_topRated, m_recentlyWatched};
 }
 
+void HomeScreenModel::refresh()
+{
+    // A signal, not a request: this model holds no `ApiClient` and must not
+    // acquire one.  Two objects that each hold a transport and each decide
+    // what a profile is are how a request ends up going out with the wrong one.
+    emit refreshRequested();
+}
+
 void HomeScreenModel::beginLoad()
 {
     m_loading = true;

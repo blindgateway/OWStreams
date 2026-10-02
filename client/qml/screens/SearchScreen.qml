@@ -47,7 +47,9 @@ Item {
 
             AppTextField {
                 id: field
-                anchors.fill: parent
+                anchors.left: parent.left
+                anchors.right: clearButton.visible ? clearButton.left : parent.right
+                anchors.rightMargin: clearButton.visible ? Theme.spaceSm : 0
                 anchors.topMargin: Theme.spaceSm
                 label: qsTr("Search")
                 placeholderText: qsTr("Title, cast, genre, year…")
@@ -56,6 +58,23 @@ Item {
                 // the query and this field is told what it is.
                 onTextChanged: if (screen.controller) screen.controller.setSearchQuery(text)
                 onAccepted: if (screen.controller) screen.controller.submitSearch()
+            }
+
+            // Empty the search.
+            //
+            // The only way back to "not searching" was to select the field's
+            // text and delete it, one character at a time.  A search that
+            // matched nothing could not be dismissed at all: the results pane
+            // stayed, the field stayed full of the query, and the grid below
+            // was the only evidence that anything had happened.
+            AppButton {
+                id: clearButton
+                anchors.right: parent.right
+                anchors.verticalCenter: field.verticalCenter
+                visible: screen.hasQuery
+                weight: "quiet"
+                text: qsTr("Clear")
+                onClicked: if (screen.controller) screen.controller.clearSearch()
             }
         }
 

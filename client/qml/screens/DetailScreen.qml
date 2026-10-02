@@ -187,6 +187,82 @@ Flickable {
                     wrapMode: Text.WordWrap
                 }
 
+                // -- your rating ------------------------------------------------
+                // Five, not ten.  The server's scale is 0-10; the control is
+                // half of it, so the number stored is still on the server's
+                // scale and the arithmetic is one multiplication.
+                //
+                // A rotated square rather than a star glyph.  A star would be a
+                // character the icon set does not draw and a fifth font to
+                // match, for a shape this small that reads either way; and the
+                // row is filled to the current rating, so the control shows
+                // the answer as well as asking for it.
+                RowLayout {
+                    id: ratingRow
+                    Layout.fillWidth: true
+                    Layout.topMargin: Theme.spaceSm
+                    spacing: Theme.spaceXs
+                    visible: screen.hasMedia && screen.controller !== null
+
+                    readonly property int rating: screen.hasMedia && screen.media.user_rating
+                        ? Math.round(Number(screen.media.user_rating) / 2) : 0
+                    readonly property int hovered: -1
+                    readonly property int label: rating > 0 ? rating : hovered
+
+                    Text {
+                        text: ratingRow.label > 0
+                              ? qsTr("Your rating: %1 of 5").arg(ratingRow.label)
+                              : qsTr("Rate it")
+                        color: Theme.textMuted
+                        font.pixelSize: Theme.typeMicro
+                        font.family: Theme.family
+                    }
+
+                    Row {
+                        spacing: 2
+
+                        Repeater {
+                            model: 5
+
+                            delegate: Item {
+                                id: star
+                                required property int index
+                                width: 26
+                                height: 26
+
+                                readonly property bool filled:
+                                    (star.index + 1) <= ratingRow.label
+
+                                Rectangle {
+                                    anchors.centerIn: parent
+                                    width: 14
+                                    height: 14
+                                    rotation: 45
+                                    radius: 1
+                                    color: star.filled ? Theme.accent : "transparent"
+                                    border.width: 1
+                                    border.color: star.filled ? Theme.accent
+                                                               : Theme.textFaint
+                                }
+
+                                MouseArea {
+                                    anchors.fill: parent
+                                    hoverEnabled: true
+                                    onEntered: ratingRow.hovered = star.index + 1
+                                    onExited: ratingRow.hovered = -1
+                                    onClicked: {
+                                        ratingRow.hovered = -1
+                                        if (screen.controller && screen.media)
+                                            screen.controller.setRating(
+                                                screen.media.id,
+                                                (star.index + 1) * 2)
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
                 Flow {
                     Layout.fillWidth: true
                     Layout.topMargin: Theme.spaceXs

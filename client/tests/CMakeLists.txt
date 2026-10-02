@@ -63,14 +63,23 @@ foreach(suite credentialaccess credentialstore apierror apiclient librarymodel
     endif()
     # `screenroutes` reads the QML *sources* and the headers, so it links none
     # of the client: no network stack, no media backend, and nothing that
-    # needs a platform plugin.  What it needs instead is the path to the
-    # sources, which is a compile definition rather than a target property --
-    # hence the variable rather than a `target_compile_definitions` call here,
-    # which would run before the target exists.
+    # needs a platform plugin.  What it needs instead is the path to the QML,
+    # which is a compile definition rather than a target property -- hence the
+    # variable rather than a `target_compile_definitions` call here, which
+    # would run before the target exists.
     if(suite STREQUAL "screenroutes")
         set(suite_sources "")
+        # The escaped quotes are the whole point.  Written the obvious way --
+        # `FOO="${CMAKE_CURRENT_SOURCE_DIR}"` -- the definition reaches the
+        # compiler as a bare token `-DFOO=/home/phuree/...`, the `/` splits
+        # it, and `QStringLiteral(FOO)` expands to
+        # `QStringLiteral(/home/phuree/...)`: one identifier, diagnosed as an
+        # undeclared name where it is *used* rather than where it is defined.
+        # The build was clean, the suite ran, and it was checking a path that
+        # had quietly become something else -- which is how the suite reported
+        # every feature missing while the QML plainly called them.
         set(suite_definitions
-            STREAM_TESTCASE_SOURCEDIR="${CMAKE_CURRENT_SOURCE_DIR}")
+            "STREAM_TESTCASE_QMLROOT=\"${CMAKE_CURRENT_SOURCE_DIR}/..\"")
     endif()
     qt_add_executable(stream-client-tests-${suite} tst_${suite}.cpp ${suite_sources})
     if(suite_definitions)

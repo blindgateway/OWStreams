@@ -32,11 +32,42 @@ Flickable {
     readonly property int columns: Responsive.columnsFor(
         width - Responsive.pageMargin * 2, cardWidth, 2, 8)
 
+    // Ask for the next page as the viewer reaches the end of what is on screen.
+    //
+    // The `GridView` is sized to its content so that the *outer* `Flickable`
+    // is the one that scrolls -- that is what fixed the nested-scroll bug this
+    // screen had.  But a `GridView` sized to its content never fires
+    // `onReached`, because nothing ever scrolls it: the grid is exactly as
+    // tall as itself.  So there is no scroll position to hang paging on, and
+    // `loadMoreLibrary` had no caller: the library stopped at sixty titles and
+    // the 1000-title requirement failed silently, with no error and no empty
+    // state.  This watches the *outer* scroll and the grid's distance from its
+    // bottom -- which is the one that moves as rows are appended.
+    readonly property real endReached: {
+        if (!screen.filterable || !screen.controller)
+            return 0
+        const distance = (screen.contentHeight - screen.height) - grid.y - grid.height
+        return distance <= 0 ? 0 : distance / Math.max(1, screen.height)
+    }
+
+    // Read the property once on completion, so `onEndReachedChanged` has a
+    // before-value to change from.  Without it the first evaluation happens
+    // after the handler is installed and QML cannot tell a property's first
+    // value from a change -- so on a library that fits on one screen, where
+    // the distance is zero, the handler would never run and page one would
+    // never be asked for.
+    Component.onCompleted: screen.endReached
+
     implicitHeight: column.implicitHeight
     contentHeight: column.implicitHeight + Theme.spaceXxl * 2
     clip: true
     boundsBehavior: Flickable.StopAtBounds
     ScrollBar.vertical: ScrollBar {}
+
+    onEndReachedChanged: {
+        if (screen.filterable && screen.controller && screen.endReached > 0)
+            screen.controller.loadMoreLibrary()
+    }
 
     ColumnLayout {
         id: column
@@ -61,13 +92,33 @@ Flickable {
             }
 
             Text {
+                id: countText
                 anchors.right: parent.right
                 anchors.verticalCenter: parent.verticalCenter
-                visible: Boolean(screen.model) && screen.model.count > 0
+                visible: !screen.filterable && Boolean(screen.model)
+                         && screen.model.count > 0
                 text: qsTr("%n title(s)", "", screen.model ? screen.model.count : 0)
                 color: Theme.textMuted
                 font.pixelSize: Theme.typeCaption
                 font.family: Theme.family
+            }
+
+            // Re-fetch the first page, whatever is on screen.
+            //
+            // `goLibrary()` deliberately does *not* fetch when the grid is
+            // already full -- coming back to the library should not
+            // re-request a thousand titles somebody is looking at -- so this is
+            // the only way to ask for a fresh page from the application.  It
+            // was a slot with no button, a test proving the slot worked, and
+            // a grid that could only ever show what it was given.
+            AppButton {
+                anchors.right: countText.left
+                anchors.verticalCenter: parent.verticalCenter
+                anchors.rightMargin: Theme.spaceSm
+                visible: screen.filterable && screen.controller !== null
+                weight: "quiet"
+                text: qsTr("Refresh")
+                onClicked: screen.controller.refreshLibrary()
             }
         }
 

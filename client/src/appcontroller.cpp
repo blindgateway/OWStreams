@@ -27,6 +27,12 @@ AppController::AppController(ApiClient *api, QObject *parent)
         m_lastError.clear();
         emit lastErrorChanged();
     });
+    // The home screen's refresh button asks its model, the model asks the
+    // controller, and the controller owns the transport.  Two hops rather than
+    // one because `HomeScreen` is handed no controller at all -- adding one
+    // would put a request-making object into a screen whose whole job is to
+    // lay seven rails out.
+    connect(m_home, &HomeScreenModel::refreshRequested, this, &AppController::refresh);
     connect(m_api, &ApiClient::baseUrlChanged, this, [this] {
         // Posters are absolute URLs built from this, so every model has to be
         // told.  A server switch invalidates them all: the new server has its

@@ -23,6 +23,20 @@
 //   which the player emits for F and Escape, so both keys did nothing.
 // * The detail screen read a `rating` field the server does not send; the score
 //   is `rating_value` and its origin is `rating_source`.
+// * The player's next/previous reached three handlers and performed nothing.
+// * And five features the brief names that the client could already do and no
+//   screen offered: ratings, library refresh, library paging, clearing a
+//   search, and reloading the home screen.  The library paging one is the
+//   reason this suite earns its keep -- a `GridView` sized to its own content
+//   never fires `onReached`, so `loadMoreLibrary` had no caller and a library
+//   of a thousand titles stopped at sixty, with no error and no empty state.
+//
+// Read the sources, do not render them, and check both directions: that every
+// call a handler makes resolves (`everyHandlerCallNamesSomethingThisProject
+// Declares`), and that every feature the brief names is offered somewhere
+// (`everyControllerCallIsReachableFromAScreen`).  The second direction is the
+// one that finds the features above; the first cannot, because a feature that
+// nobody calls has nothing misspelled about it.
 
 #include <QtTest>
 
@@ -30,6 +44,8 @@
 #include <QFile>
 #include <QRegularExpression>
 #include <QSet>
+
+#include <algorithm>
 
 namespace {
 
@@ -101,8 +117,15 @@ QString qmlRoot()
     // The suite's own source directory, not the build directory: the module
     // compiles the QML into a resource, and reading the *source* is what makes
     // this a check on the files a person edits.
-    return QDir(QStringLiteral(STREAM_TESTCASE_SOURCEDIR))
-        .absoluteFilePath(QStringLiteral(".."));
+    //
+    // The name says "root" rather than "sourcedir" because it is also used as
+    // the working directory when ctest runs a suite; that one is
+    // `QT_TESTCASE_BUILDDIR`, not this.  `theScreensAreWhereTheMacroSays` below
+    // asserts that what this returns really is the directory holding `qml/`,
+    // because a wrong root makes every read empty and an empty read is not an
+    // error: the last three defects in this file all presented as "this
+    // feature is missing" when the file had never been opened.
+    return QStringLiteral(STREAM_TESTCASE_QMLROOT);
 }
 
 QString sourcePath(const QString &relative)
@@ -220,12 +243,44 @@ class ScreenRoutesTest : public QObject
     Q_OBJECT
 
 private slots:
+    void theScreensAreWhereTheMacroSays();
     void everyScreenInTheShellIsChecked();
     void everyHandlerCallNamesSomethingThisProjectDeclares();
     void thePlayerEmitsFullscreenAndSomethingHandlesIt();
     void thePlayerEmitsNextAndPreviousAndSomethingHandlesThoseToo();
     void detailScreenReadsTheFieldsTheServerSends();
+    void everyControllerCallIsReachableFromAScreen();
 };
+
+void ScreenRoutesTest::theScreensAreWhereTheMacroSays()
+{
+    // The guard on every other test in this file.
+    //
+    // Five separate defects in this suite presented as "the brief's features
+    // are all missing", and the common cause was that no QML file was being
+    // read at all: the compile definition had no quotes in it, so the macro
+    // expanded inside a `QStringLiteral` to something that was not a string
+    // literal; `readLines` returns an empty list for a path that is not there,
+    // and an empty list is not an error.  Every test then reported the honest
+    // consequence -- it found nothing -- as if the application were missing
+    // fifteen features.
+    //
+    // So: the root is named, it exists, and `qml/` is inside it.  Fail here and
+    // the next failures are worth reading; pass here and the next failures are
+    // about the QML.
+    const QString root = qmlRoot();
+    QVERIFY2(!root.isEmpty(),
+             "the compile definition that names the QML directory is empty, so "
+             "every read below returns nothing and every result is a lie");
+    QVERIFY2(QFileInfo::exists(root),
+             qPrintable(QStringLiteral("the QML root does not exist: %1").arg(root)));
+    QVERIFY2(QFileInfo(root).isDir(),
+             qPrintable(QStringLiteral("the QML root is not a directory: %1").arg(root)));
+    QVERIFY2(QFileInfo::exists(sourcePath(QStringLiteral("Shell.qml"))),
+             qPrintable(QStringLiteral(
+                 "Shell.qml is not under %1, so nothing in this suite is reading "
+                 "the screens").arg(root)));
+}
 
 void ScreenRoutesTest::everyScreenInTheShellIsChecked()
 {
@@ -405,6 +460,190 @@ void ScreenRoutesTest::detailScreenReadsTheFieldsTheServerSends()
              "the detail screen reads a `rating` field the server does not "
              "send; the score is `rating_value` and the origin is "
              "`rating_source`");
+}
+
+void ScreenRoutesTest::everyControllerCallIsReachableFromAScreen()
+{
+    // The other direction.  The test above asks whether a screen's calls
+    // resolve; this asks whether a *feature* the client exposes is offered
+    // anywhere -- because a method nobody calls is a feature that does not
+    // exist, and the brief lists features rather than methods.
+    //
+    // This is a named list, and it is named for the reason it exists: the first
+    // version derived it from `AppController`'s public slots and reported all
+    // thirty of them, because the navigation is `shell.navigate()` switching on
+    // a key rather than a call per method.  A test that lists everything is a
+    // test that reports everything.  So each entry below is a feature the brief
+    // names, and each says where it is reachable from.
+    //
+    // The features below are the brief's, and each was found missing when this
+    // test first ran against the screens.  They are kept as a list rather than
+    // derived, because a derived list is a list of every public slot, and
+    // every public slot includes the ones the shell calls from `navigate()`.
+    //
+    // * `setRating` -- the server stored ratings and `AppController::setRating`
+    //   sent them, and no screen anywhere called it.  Ratings were writeable by
+    //   the API and unreachable by the application.
+    // * `refreshLibrary`, `loadMoreLibrary` -- the library's only two ways of
+    //   changing.  `loadMoreLibrary` had no caller at all: the `GridView` is
+    //   sized to its content so the *outer* `Flickable` scrolls, and a
+    //   `GridView` that nothing scrolls never fires `onReached`.  A thousand
+    //   titles were sixty.
+    // * `clearSearch` -- the only way out of a search was deleting the query
+    //   one character at a time.
+    // * `refresh` -- reachable from the home screen *model*, not the
+    //   controller: the screen is handed no controller.
+    // * The three `setLibrary*` -- the FilterBar assigned to read-only
+    //   properties, which Qt discarded with a warning nobody reads.  The
+    //   setters existed, were tested, and nothing called them; the properties
+    //   are now writeable and a write *is* the request.
+    struct Feature { const char *name; const char *where; };
+    const QList<Feature> features = {
+        {"setRating", "DetailScreen"},
+        {"toggleFavorite", "DetailScreen"},
+        {"openDetail", "Shell"},
+        {"openPlayer", "Shell"},
+        {"back", "Shell"},
+        {"refresh", "HomeScreen"},
+        {"refreshLibrary", "MediaGridScreen"},
+        {"loadMoreLibrary", "MediaGridScreen"},
+        {"clearSearch", "SearchScreen"},
+        {"playNextInList", "Shell"},
+        {"playPreviousInList", "Shell"},
+        {"clearLibraryFilters", "MediaGridScreen"},
+    };
+
+    // A filter, which is *not* a method call.
+    //
+    // The three library filters were read-only `Q_PROPERTY`s beside a
+    // `setLibrarySort`-style slot, and `MediaGridScreen` assigned to them:
+    // `onSortRequested: function (sort) { screen.controller.librarySort = sort }`.
+    // Qt discarded that assignment with a warning nobody reads, so narrowing
+    // the library to 1994 filtered nothing while the setter and its test both
+    // passed.  The properties are writeable now and the assignment is the
+    // request -- so the screen has nothing left to call, and a test that
+    // insists it call something would send someone looking for a method to
+    // re-introduce the one that was not being used.
+    struct Assignment { const char *where; const char *property; };
+    const QList<Assignment> assignments = {
+        {"MediaGridScreen", "librarySort"},
+        {"MediaGridScreen", "libraryGenre"},
+        {"MediaGridScreen", "libraryYear"},
+    };
+
+    // Every `receiver.name(` anywhere in the QML, as `name@receiver` tagged with
+    // the file it was in.
+    //
+    // The receiver is kept as `name@receiver` but is not *checked*: a feature
+    // is "called from somewhere", not "called on a particular object", and a
+    // screen says `screen.controller.setRating(...)` where the shell says
+    // `host.controller.openDetail(id)`.  Requiring a literal receiver would be
+    // another way for this test to be wrong rather than strict.
+    //
+    // What this test got wrong before it got anything right is worth writing
+    // down, because all five of these presented identically -- fourteen
+    // features "missing" while the QML plainly called them:
+    //
+    // * the compile definition had no quotes, so inside a `QStringLiteral` the
+    //   macro did not expand to a string literal at all and every read came
+    //   back empty;
+    // * the key stored the receiver where the lookup read the method;
+    // * the lookup used `QString::section` on a key whose middle field is
+    //   empty, which is *valid* and returns "" -- so even with the key fixed it
+    //   silently found nothing;
+    // * `kScreens` does not contain `Shell.qml`, which is where half of them
+    //   are called from;
+    // * and the failure message said nothing about what *was* called, so each
+    //   run produced fourteen identical sentences and no evidence.
+    //
+    // `Shell.qml` is here and not in `kScreens`: `kScreens` is the set of things
+    // the shell *instantiates*, and the shell is not one of its own screens.
+    // A list built from `kScreens` alone cannot see a single navigation call the
+    // shell makes.
+    QSet<QString> calledWith;
+    QStringList sources = kScreens;
+    sources.append(QStringLiteral("Shell.qml"));
+    const QRegularExpression call(
+        QStringLiteral("\\b([a-z][A-Za-z0-9_]*)\\.([a-z][A-Za-z0-9_]*)\\s*\\("));
+    for (const QString &screen : sources) {
+        const QString type = QFileInfo(screen).completeBaseName();
+        for (const QString &line : readLines(sourcePath(screen))) {
+            auto it = call.globalMatch(line);
+            while (it.hasNext()) {
+                const QRegularExpressionMatch one = it.next();
+                calledWith.insert(type + QLatin1Char('@') + one.captured(2)
+                                  + QLatin1Char('@') + one.captured(1));
+            }
+        }
+    }
+    QVERIFY2(!calledWith.isEmpty(),
+             "no `receiver.method(` calls were collected, so every feature below "
+             "would be reported missing no matter what the screens do");
+
+    // The file it has to be called from.  `where` is the type name, so a
+    // feature that moved to another screen is a failure to look at rather than a
+    // feature that silently went missing: the brief says what the application
+    // offers, not which file offers it.
+    QStringList unreachable;
+    for (const Feature &feature : features) {
+        const QString where = QString::fromLatin1(feature.where);
+        const QString wanted = QString::fromLatin1(feature.name);
+        bool found = false;
+        QStringList here;
+        for (const QString &entry : calledWith) {
+            if (!entry.startsWith(where + QLatin1Char('@')))
+                continue;
+            const QString method = entry.split(QLatin1Char('@')).value(1);
+            if (method == wanted)
+                found = true;
+            else if (!here.contains(method))
+                here.append(method);
+        }
+        if (!found) {
+            // What *is* called from that file, so a failure says whether the
+            // feature is missing or the collector is.  The collector was
+            // broken three times, and each of those runs printed fourteen
+            // identical sentences with nothing attached; this line is what
+            // turned the third one into a two-minute fix.
+            std::sort(here.begin(), here.end());
+            unreachable.append(QStringLiteral("%1 -- the brief's feature, reachable "
+                                              "from %2, and nothing calls it (%2 "
+                                              "calls: %3)")
+                                   .arg(wanted, where,
+                                        here.isEmpty()
+                                            ? QStringLiteral("nothing at all")
+                                            : here.join(QStringLiteral(", "))));
+        }
+    }
+    // The same check for the three writeable filter properties: a screen that
+    // reads `librarySort` but never writes it is offering a filter that does
+    // not filter, which is exactly what the pair-of-a-setter-and-a-read-only-
+    // property shape produced.
+    for (const Assignment &assignment : assignments) {
+        const QString where = QString::fromLatin1(assignment.where);
+        const QString property = QString::fromLatin1(assignment.property);
+        bool written = false;
+        for (const QString &line : readLines(sourcePath(QStringLiteral("screens/")
+                                                        + where + QStringLiteral(".qml")))) {
+            const QRegularExpression write(QStringLiteral("%1\\s*=").arg(property));
+            if (write.match(line).hasMatch()
+                && !line.contains(QStringLiteral("controller.%1 READ").arg(property))) {
+                written = true;
+                break;
+            }
+        }
+        if (!written) {
+            unreachable.append(QStringLiteral("%1.%2 -- a filter the brief asks for, "
+                                              "shown in the UI and never written")
+                                   .arg(where, property));
+        }
+    }
+
+    QVERIFY2(unreachable.isEmpty(),
+             qPrintable(QStringLiteral(
+                 "the client can do these and no screen asks for it, which is a "
+                 "feature that exists in the API and not in the application:\n  %1")
+                            .arg(unreachable.join(QStringLiteral("\n  ")))));
 }
 
 QTEST_GUILESS_MAIN(ScreenRoutesTest)

@@ -48,7 +48,10 @@ Flickable {
 
             Text {
                 anchors.left: parent.left
+                anchors.right: headerActions.left
+                anchors.rightMargin: Theme.spaceSm
                 anchors.verticalCenter: parent.verticalCenter
+                elide: Text.ElideRight
                 text: qsTr("Stream")
                 color: Theme.text
                 font.pixelSize: Responsive.isPhone ? Theme.typeTitle : Theme.typeDisplay
@@ -56,12 +59,34 @@ Flickable {
                 font.weight: Font.DemiBold
             }
 
-            AppButton {
+            Row {
+                id: headerActions
                 anchors.right: parent.right
                 anchors.verticalCenter: parent.verticalCenter
-                weight: "quiet"
-                text: qsTr("Switch profile")
-                onClicked: screen.profileSwitchRequested()
+                spacing: Theme.spaceXs
+
+                // Reload the rails.
+                //
+                // `AppController::refresh` is the only way to re-fetch the home
+                // screen and no screen called it, so the rails showed whatever
+                // the first load returned until the application was restarted:
+                // a title added on the server, or a rating given in another
+                // session, never appeared.  It asks the model, and the model
+                // asks the controller -- the screen holds no controller.
+                AppButton {
+                    anchors.verticalCenter: parent.verticalCenter
+                    weight: "quiet"
+                    text: qsTr("Refresh")
+                    visible: screen.home !== null
+                    onClicked: screen.home.refresh()
+                }
+
+                AppButton {
+                    anchors.verticalCenter: parent.verticalCenter
+                    weight: "quiet"
+                    text: qsTr("Switch profile")
+                    onClicked: screen.profileSwitchRequested()
+                }
             }
         }
 

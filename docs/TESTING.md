@@ -63,7 +63,8 @@ client/tests/
 ├── tst_playbackcontroller.cpp   the player's rules and its progress throttle
 ├── tst_captureguard.cpp         that the guard reports only what it applied
 ├── tst_timetext.cpp             that the two languages agree on a runtime
-├── tst_screenroutes.cpp         that every screen calls something that exists
+├── tst_screenroutes.cpp         screen wiring, both directions: every call
+│                               resolves, every named feature is offered
 └── e2e/                         harness.py, ServerFixture: the real server
 ```
 
@@ -400,11 +401,18 @@ Stated plainly, because a test suite that pretends is worse than none.
 
 - **QML behaviour.** The C++ behind the client is tested — the session machine,
   the models, the player, the bytes on the wire, and the whole app against a
-  real server. `tst_screenroutes.cpp` reads each screen's source and checks that
-  every method its handlers call is one this project declares, that the shell
-  handles every signal the player emits, and that the detail screen reads the
-  fields the server sends — which is how an unwired `fullscreenRequested` was
-  found, and is a *reference* check rather than a rendering one. The QML is
+  real server. `tst_screenroutes.cpp` reads each screen's source and checks both
+  directions: that every method a handler calls is one this project declares,
+  and that every feature the brief names is offered by some screen. The first
+  direction found the unwired `fullscreenRequested` and the player's next and
+  previous, which reached three handlers and performed nothing. The second is
+  what found five features the client could already do and no screen offered —
+  ratings, library refresh, library paging, clearing a search, reloading the
+  home screen. The paging one was the worst: the `GridView` is sized to its own
+  content so the outer `Flickable` scrolls, and a `GridView` nothing scrolls
+  never fires `onReached`, so `loadMoreLibrary` had no caller and a library of
+  a thousand titles stopped at sixty, with no error and no empty state. This is
+  a *reference* check rather than a rendering one. The QML is
   otherwise checked three ways, and only one of them is a test:
   `qmllint` on every build, which is a syntax, type and property check;
   *running* the application and reading what Qt logged, which is how six more
