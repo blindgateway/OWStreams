@@ -33,6 +33,13 @@ Item {
     /// property can name one.
     property var guard: null
 
+    /// `AppController` -- *not* the playback controller beside it.  Which title
+    /// comes next is a question about the list the viewer came from, and that
+    /// list belongs to the screen, not to the player.  Asking the playback
+    /// controller for it is a TypeError on every frame, which is how the two
+    /// were confused in the first place.
+    property var queue: null
+
     /// The server's media object, remembered so the retry button can re-open
     /// the title properly.  By the time the screen is showing an error the
     /// controller no longer has it -- the error is what stopped the open.
@@ -553,10 +560,8 @@ Item {
     // brief's next/previous are in the brief because somebody pressing them at
     // the end of a film expects either the next title or a button that says
     // there is not one.
-    readonly property bool canGoNext: screen.controller
-        ? screen.controller.adjacentMediaId(1) > 0 : false
-    readonly property bool canGoPrevious: screen.controller
-        ? screen.controller.adjacentMediaId(-1) > 0 : false
+    readonly property bool canGoNext: queue ? queue.adjacentMediaId(1) > 0 : false
+    readonly property bool canGoPrevious: queue ? queue.adjacentMediaId(-1) > 0 : false
 
     Component.onCompleted: {
         // The frames go where this screen draws them.  `videoSink` rather than

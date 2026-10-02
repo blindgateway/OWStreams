@@ -290,6 +290,7 @@ Item {
                         visible: host.controller.screen === AppController.Player
                         controller: host.controller.player
                         api: App.api
+                        queue: host.controller
                         guard: host.controller.captureGuard
                         media: host.controller.detail
                         onCloseRequested: host.controller.back()
