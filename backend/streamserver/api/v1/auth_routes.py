@@ -22,7 +22,7 @@ from fastapi import APIRouter, HTTPException, Query, Request, status
 
 from ...db import repositories as repo
 from ...services.auth import validate_password_strength
-from ..deps import AdminDep, CallerDep, Ctx, client_ip
+from ..deps import AdminDep, CallerDep, Ctx, UncappedCallerDep, client_ip
 from ..schemas import (
     LoginRequest,
     OkResponse,
@@ -146,7 +146,8 @@ async def list_sessions(caller: CallerDep, context: Ctx) -> list[SessionOut]:
 
 @router.delete("/sessions/{session_id}", response_model=OkResponse,
                summary="Revoke one device session")
-async def revoke_session(session_id: str, caller: CallerDep, context: Ctx) -> OkResponse:
+async def revoke_session(session_id: str, caller: UncappedCallerDep,
+                         context: Ctx) -> OkResponse:
     revoked = context.auth.revoke_session(caller.user_id, session_id, reason="user_revoked")
     if not revoked:
         raise HTTPException(status_code=404, detail="Session not found.")

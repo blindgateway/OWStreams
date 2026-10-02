@@ -144,6 +144,14 @@ public slots:
     void closePlayer();
 
     void refresh();
+    /// Re-fetch the first library page, whatever is on screen.
+    ///
+    /// Distinct from `goLibrary` on purpose: that one only fetches when the
+    /// grid is empty, because coming back to the library should not re-request
+    /// a thousand titles somebody is already looking at.  A pull-to-refresh
+    /// wants the opposite, and a test that wants to see the request happen
+    /// needs the same thing.
+    void refreshLibrary();
     void toggleFavorite(int mediaId, bool favorite);
     void setRating(int mediaId, double score);
 

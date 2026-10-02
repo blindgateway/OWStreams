@@ -77,7 +77,7 @@ class RequestContextMiddleware(BaseHTTPMiddleware):
             raise
         duration_ms = (time.perf_counter() - started) * 1000
 
-        is_stream = request.url.path.startswith("/api/v1/stream/")
+        is_stream = "stream" in request.url.path.split("/")
         client = request.client.host if request.client else "unknown"
         response.headers["X-Request-Id"] = request_id
         response.headers["X-Response-Time-Ms"] = f"{duration_ms:.1f}"

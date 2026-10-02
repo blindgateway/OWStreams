@@ -316,6 +316,20 @@ def test_a_forged_profile_header_is_refused(client, owner, second_session):
     assert response.status_code in (401, 404), response.text
 
 
+def test_a_zero_profile_header_is_refused(client, owner):
+    """`X-Profile-Id: 0` is what the client sends before a profile is chosen.
+
+    Sending it unconditionally is deliberate: leaving the header off entirely
+    makes the server fall back to the account's first profile and answer 200,
+    so a request made before the profile screen could be answered with somebody
+    else's favourites.  Zero has to be refused rather than resolved.
+    """
+    response = client.get("/api/v1/library/favorites",
+                          headers={**owner["headers"], "X-Profile-Id": "0"})
+    assert response.status_code == 404, response.text
+    assert response.json()["error"] == "profile_not_found", response.text
+
+
 def test_a_non_numeric_profile_header_is_refused(client, owner):
     response = client.get("/api/v1/library/media",
                           headers={**owner["headers"], "X-Profile-Id": "abc"})

@@ -41,6 +41,14 @@ public:
 
     QString accessToken() const { return m_accessToken; }
 
+    /// The profile the streaming requests act as.  `QMediaPlayer` fetches
+    /// through ffmpeg rather than through `ApiClient::send`, so there is no
+    /// other place this header could be added -- and the stream route is
+    /// profile-scoped, so without it the server answers 404.
+    void setProfileId(int profileId);
+    int profileId() const { return m_profileId; }
+
+
     /// Whether this manager would attach a token to `url`.  Exposed for the
     /// tests, because "would this request leak a credential" is a security
     /// property and should be asserted rather than reasoned about.
@@ -57,4 +65,5 @@ private:
 
     QString m_origin;
     QString m_accessToken;
+    int m_profileId = 0;
 };

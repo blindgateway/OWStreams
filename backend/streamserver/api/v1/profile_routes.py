@@ -16,7 +16,7 @@ from ...services.profiles import (
     ProfileError,
     ProfileService,
 )
-from ..deps import CallerDep, Ctx
+from ..deps import CallerDep, Ctx, UncappedCallerDep
 from ..schemas import (
     OkResponse,
     ProfilePathId,
@@ -47,7 +47,7 @@ async def list_profiles(caller: CallerDep, context: Ctx) -> list[ProfileOut]:
 
 @router.post("", response_model=ProfileOut, status_code=201,
              summary="Create a profile")
-async def create_profile(payload: ProfileCreate, caller: CallerDep,
+async def create_profile(payload: ProfileCreate, caller: UncappedCallerDep,
                          context: Ctx) -> ProfileOut:
     try:
         profile = context.profiles.create(
@@ -74,8 +74,9 @@ async def get_profile(profile_id: ProfilePathId, caller: CallerDep, context: Ctx
 
 @router.patch("/{profile_id}", response_model=ProfileOut,
               summary="Rename a profile or change its settings")
-async def update_profile(profile_id: ProfilePathId, payload: ProfileUpdate, caller: CallerDep,
-                         context: Ctx) -> ProfileOut:
+async def update_profile(profile_id: ProfilePathId, payload: ProfileUpdate,
+                          caller: UncappedCallerDep,
+                          context: Ctx) -> ProfileOut:
     try:
         profile = context.profiles.update(
             caller.user_id, profile_id,
@@ -89,7 +90,8 @@ async def update_profile(profile_id: ProfilePathId, payload: ProfileUpdate, call
 
 
 @router.delete("/{profile_id}", response_model=OkResponse, summary="Delete a profile")
-async def delete_profile(profile_id: ProfilePathId, caller: CallerDep, context: Ctx) -> OkResponse:
+async def delete_profile(profile_id: ProfilePathId, caller: UncappedCallerDep,
+                          context: Ctx) -> OkResponse:
     try:
         context.profiles.delete(caller.user_id, profile_id)
     except ProfileError as exc:
@@ -99,7 +101,8 @@ async def delete_profile(profile_id: ProfilePathId, caller: CallerDep, context: 
 
 @router.post("/reorder", response_model=list[ProfileOut],
              summary="Reorder profiles on the selection screen")
-async def reorder(payload: ProfileReorder, caller: CallerDep, context: Ctx) -> list[ProfileOut]:
+async def reorder(payload: ProfileReorder, caller: UncappedCallerDep,
+                   context: Ctx) -> list[ProfileOut]:
     try:
         profiles = context.profiles.reorder(caller.user_id, payload.profile_ids)
     except ProfileError as exc:
@@ -112,8 +115,8 @@ async def reorder(payload: ProfileReorder, caller: CallerDep, context: Ctx) -> l
 # ---------------------------------------------------------------------------
 @router.post("/{profile_id}/pin", response_model=ProfileOut,
              summary="Set or clear a profile PIN")
-async def set_pin(profile_id: ProfilePathId, payload: ProfilePinSet, caller: CallerDep,
-                  context: Ctx) -> ProfileOut:
+async def set_pin(profile_id: ProfilePathId, payload: ProfilePinSet,
+                  caller: UncappedCallerDep, context: Ctx) -> ProfileOut:
     try:
         profile = context.profiles.set_pin(
             caller.user_id, profile_id, payload.pin, current_pin=payload.current_pin
@@ -125,8 +128,8 @@ async def set_pin(profile_id: ProfilePathId, payload: ProfilePinSet, caller: Cal
 
 @router.put("/{profile_id}/pin", response_model=ProfileOut,
             summary="Change an existing profile PIN")
-async def change_pin(profile_id: ProfilePathId, payload: ProfilePinChange, caller: CallerDep,
-                     context: Ctx) -> ProfileOut:
+async def change_pin(profile_id: ProfilePathId, payload: ProfilePinChange,
+                     caller: UncappedCallerDep, context: Ctx) -> ProfileOut:
     try:
         profile = context.profiles.change_pin(
             caller.user_id, profile_id,
@@ -139,8 +142,9 @@ async def change_pin(profile_id: ProfilePathId, payload: ProfilePinChange, calle
 
 @router.post("/{profile_id}/unlock", response_model=OkResponse,
              summary="Unlock a PIN-locked profile")
-async def unlock(profile_id: ProfilePathId, request: Request, payload: ProfilePinVerify,
-                 caller: CallerDep, context: Ctx) -> OkResponse:
+async def unlock(profile_id: ProfilePathId, request: Request,
+                 payload: ProfilePinVerify, caller: UncappedCallerDep,
+                 context: Ctx) -> OkResponse:
     """Verify a PIN.
 
     The PIN protects a *local* profile selection; it is not an authentication
@@ -182,8 +186,8 @@ async def is_locked(profile_id: ProfilePathId, caller: CallerDep, context: Ctx) 
 
 @router.post("/select", response_model=OkResponse,
              summary="Record the profile the client is switching to")
-async def select_profile(payload: ProfileSelection, caller: CallerDep,
-                         context: Ctx) -> OkResponse:
+async def select_profile(payload: ProfileSelection, caller: UncappedCallerDep,
+                          context: Ctx) -> OkResponse:
     """Audit the profile switch.
 
     The returned access token is *not* reissued here -- the client already has

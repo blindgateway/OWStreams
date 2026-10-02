@@ -241,6 +241,72 @@ def second_session(client, second_user):
 
 
 @pytest.fixture
+def capped(app, library_root: Path) -> dict:
+    """A signed-in *non-administrator* account that still owes a password change.
+
+    This is the account the default-password gate exists for, and it is not the
+    administrator on purpose: the gate exempts administrators, so a fixture
+    built on ``owner`` would pass whether the gate was wired up or not.
+
+    Returns headers carrying the profile id, the profile id, and the first media
+    id, so a test can mutate something real rather than assert on a 403 alone.
+    """
+    from streamserver.db import repositories as repo
+    from streamserver.security import passwords
+
+    context = app.state.context
+    db = context.db
+    config = context.config
+
+    user = repo.create_user(
+        db, username="capped",
+        password_hash=passwords.hash_password(
+            USER_PASSWORD, n=config.auth.scrypt_n, r=config.auth.scrypt_r,
+            p=config.auth.scrypt_p, maxmem=config.auth.scrypt_maxmem,
+        ),
+        is_admin=False, display_name="Capped",
+        must_change_password=True,
+    )
+    repo.create_profile(db, int(user["id"]), "Capped")
+
+    # One title, so the mutation targets are real.
+    (library_root / "Capped.2019.1080p.mkv").write_bytes(bytes(range(256)) * 16)
+    stats = context.importer.scan()
+    assert stats.failed == 0, stats.errors
+    row = repo.get_media_by_path(
+        db, str((library_root / "Capped.2019.1080p.mkv").resolve()))
+    assert row is not None
+    media_id = int(row["id"])
+
+    return {
+        "user_id": int(user["id"]),
+        "username": "capped",
+        "password": USER_PASSWORD,
+        "profile_id": repo.list_profiles(db, int(user["id"]))[0]["id"],
+        "media_id": media_id,
+        "path": "/Capped.2019.1080p.mkv",
+    }
+
+
+@pytest.fixture
+def capped_session(client, capped):
+    """``capped`` signed in, with headers a caller can hand straight to a route."""
+    response = client.post("/api/v1/auth/login", json={
+        "username": capped["username"], "password": capped["password"],
+    })
+    assert response.status_code == 200, response.text
+    assert response.json()["must_change_password"] is True
+    token = response.json()["access_token"]
+    auth = {"Authorization": f"Bearer {token}"}
+    return {
+        **capped,
+        "token": token,
+        "auth": auth,
+        "headers": {**auth, "X-Profile-Id": str(capped["profile_id"])},
+    }
+
+
+@pytest.fixture
 def library(app, library_root: Path) -> list[dict]:
     """Three imported titles with genres, so list/search routes have data.
 

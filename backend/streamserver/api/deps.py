@@ -260,17 +260,22 @@ def require_stream_caller(
                               allow_media_token=True)
 
 
+def require_admin(caller: UncappedCallerDep) -> Caller:
+    """Administrator-only, on top of the default-password gate.
 
-
-def require_admin(caller: CallerDep) -> Caller:
+    Two gates, one dependency, so that neither can be left off by accident:
+    :func:`require_admin` alone let any flagged administrator rewrite the users
+    table, and the default-password gate alone left every admin route
+    ungated.  Since the gate exempts administrators and this one does not, the
+    combination is exactly "not an administrator, and not on a default
+    password".
+    """
     if not caller.is_admin:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="This action requires an administrator account.",
         )
     return caller
-
-
 
 
 def require_profile(
@@ -293,7 +298,14 @@ def _resolve_profile(
     caller: Caller,
     x_profile_id: str | None,
 ) -> int:
-    """Validate the acting profile and check it belongs to the caller."""
+    """Validate the acting profile and check it belongs to the caller.
+
+    A profile named by neither the header nor the token falls back to the
+    account's first, and whether that is acceptable is the caller's decision --
+    see :func:`require_own_profile`.
+    """
+    from ..db import repositories as repo
+
     profile_id: int | None = None
     if x_profile_id:
         try:
@@ -306,13 +318,69 @@ def _resolve_profile(
     if profile_id is None:
         profile_id = caller.claims.profile_id
 
+    if profile_id is None:
+        # No header and no profile in the token.  A session token names an
+        # *account*; every profile-scoped route needs a *profile*, and the
+        # first request after sign-in has not named one yet.
+        #
+        # For an account-scoped read -- the catalogue itself, a title's
+        # metadata, a poster -- the account's first profile is a sound answer,
+        # and refusing would make every such read an error for no benefit.  For
+        # anything that is per profile *by definition* -- favourites, history,
+        # ratings, the home rails -- it is not: the caller would be answered
+        # with somebody's list, and no header of their own would change it.
+        # `require_own_profile` is that distinction, made per route.
+        profiles = repo.list_profiles(context.db, caller.user_id)
+        if not profiles:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail={"error": "no_profile",
+                        "message": "This account has no profiles."},
+            )
+        profile_id = int(profiles[0]["id"])
+
     try:
         resolved = context.profiles.require(caller.user_id, profile_id)
     except ProfileError as exc:
-        raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
+        # The dict form, so the body keeps `exc.code`.  The bare-string form
+        # this used to pass made `http_exception_handler` fall back to
+        # `_code_for_status`, so a foreign profile answered
+        # `{"error": "not_found"}` -- indistinguishable from a missing title,
+        # and from the documented `profile_not_found` every other profile
+        # failure carries.
+        raise HTTPException(status_code=exc.status_code,
+                             detail={"error": exc.code,
+                                     "message": str(exc)}) from exc
 
     request.state.profile_id = resolved
     return resolved
+
+
+def require_own_profile(request: Request, context: Ctx, caller: CallerDep,
+                        x_profile_id: Annotated[str | None,
+                                               Header(alias="X-Profile-Id")] = None,
+                        ) -> int:
+    """:func:`require_profile` for routes whose answer belongs to one profile.
+
+    Favourites, watch history, ratings and the home rails are per profile, so a
+    request that names none must not be answered with the account's first
+    profile: two people sharing an account would see each other's lists, and the
+    client would have no way to tell -- its own `X-Profile-Id` would simply be
+    ignored.
+
+    A playback token *is* scoped: it names both a title and a profile, so a
+    streaming request needs no header at all.
+    """
+    if not x_profile_id and caller.claims.profile_id is None:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={
+                "error": "profile_required",
+                "message": "No profile was named. Send X-Profile-Id, or use a "
+                           "playback token, which names its profile.",
+            },
+        )
+    return _resolve_profile(request, context, caller, x_profile_id)
 
 
 def require_media(profile_id: ProfileDep, media_id: int, context: Ctx) -> dict:
@@ -344,13 +412,43 @@ def require_stream_profile(
     return _resolve_profile(request, context, caller, x_profile_id)
 
 
-def require_uncapped(caller: CallerDep) -> Caller:
+def _is_stream(request: Request) -> bool:
+    """Whether this is the streaming route, whatever id it carries.
+
+    Matched on a path *segment*: the route is ``/api/v1/stream/7``, so neither
+    a prefix nor a suffix is the whole truth.
+    """
+    return "stream" in request.url.path.split("/")
+
+
+def require_uncapped(request: Request, caller: CallerDep) -> Caller:
     """Reject mutations from an account still on the shipped default password.
 
     Reads stay available so the client can render the change-password screen
     without a second code path.
+
+    Enforced for every method that mutates, rather than by each route opting
+    in.  Wiring it per route left the gate open: the mutating playback and
+    progress routes never took the dependency, so an account on the shipped
+    default password could rate, favourite, start and close a playback session
+    and write watch history -- the state the first-run flow exists to stop
+    somebody else leaving behind.  ``test_the_gate_is_wired_to_every_mutating
+    _route`` in ``tests/test_client_routes.py`` now walks the routers and
+    refuses to let a mutating route come back ungated.
+
+    Administrators are exempt.  The documented first-run is ``add-user
+    --admin``, and the CLI has no change-password flow, so gating them would
+    leave the administrator permanently unable to stream anything.
+
+    Refused with 403 plus ``X-Requires-Password-Change: true``, which is what
+    the client watches for.
     """
-    if caller.must_change_password:
+    # The one GET that also writes: streaming records "started watching" in the
+    # history before the first byte is served, so a method test on its own
+    # would hand a capped account the exact state this gate protects.
+    if request.method in ("GET", "HEAD", "OPTIONS") and not _is_stream(request):
+        return caller
+    if caller.must_change_password and not caller.is_admin:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Change your password before continuing.",
@@ -359,6 +457,20 @@ def require_uncapped(caller: CallerDep) -> Caller:
     return caller
 
 
+def require_uncapped_caller(request: Request, caller: CallerDep) -> Caller:
+    """:func:`require_uncapped` for a route that authenticates with a session."""
+    return require_uncapped(request, caller)
+
+
+def require_uncapped_stream_caller(request: Request,
+                                   caller: StreamCallerDep) -> Caller:
+    """:func:`require_uncapped` for the streaming route.
+
+    Separate from the above for the same reason as :data:`StreamCallerDep`:
+    sharing one alias would hand the streaming route's caller -- possibly
+    authenticated by a playback token -- to a session route.
+    """
+    return require_uncapped(request, caller)
 
 
 def new_request_id() -> str:
@@ -378,5 +490,14 @@ CallerDep = Annotated[Caller, Depends(require_caller)]
 StreamCallerDep = Annotated[Caller, Depends(require_stream_caller)]
 AdminDep = Annotated[Caller, Depends(require_admin)]
 ProfileDep = Annotated[int, Depends(require_profile)]
+OwnProfileDep = Annotated[int, Depends(require_own_profile)]
 StreamProfileDep = Annotated[int, Depends(require_stream_profile)]
-UncappedDep = Annotated[Caller, Depends(require_uncapped)]
+
+# One per mutating route, rather than one shared alias, for the same reason the
+# stream route has its own caller: FastAPI's dependency cache hands the first
+# resolved value to every route that names the same alias, so a shared
+# `Caller`-returning dependency would leak one route's authentication into
+# another's.  Each below resolves through `require_caller` and then applies the
+# default-password gate.
+UncappedCallerDep = Annotated[Caller, Depends(require_uncapped_caller)]
+UncappedStreamCallerDep = Annotated[Caller, Depends(require_uncapped_stream_caller)]

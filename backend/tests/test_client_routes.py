@@ -276,3 +276,413 @@ def test_the_profile_header_reaches_every_scoped_route() -> None:
         f"expected the client to be profile-scoped under /library and /media; "
         f"found {sorted(set(checked))}"
     )
+
+
+# ---------------------------------------------------------------------------
+# The default-password gate
+# ---------------------------------------------------------------------------
+#: The aliases that apply it.  ``require_uncapped`` is reached through one of
+#: these rather than named directly, because a route takes the dependency as an
+#: ``Annotated[...]`` alias -- and under ``from __future__ import annotations``
+#: that alias is a *string* at runtime, which is exactly the trap documented
+#: above: comparing with ``is`` matches nothing and the test passes over an
+#: empty list.
+UNCAPPED_ALIASES = {"UncappedCallerDep", "UncappedStreamCallerDep", "AdminDep"}
+
+#: The routes that are deliberately *not* gated, each with its reason.  Most of
+#: these are not reads at all -- signing out revokes a session row, streaming
+#: records "started watching" -- and refusing them would leave a capped
+#: account unable to *fix* the problem it has.
+UNCAPPED_EXEMPT = {
+    f"POST {API_ROOT}/auth/login": "no caller yet: authentication cannot be refused",
+    f"POST {API_ROOT}/auth/refresh": "the refresh token is the credential, and refusing "
+                          "it would strand the session with no way to renew it",
+    f"POST {API_ROOT}/auth/logout": "revoking a session is the safest thing a capped "
+                         "account can do, and it must work",
+    f"POST {API_ROOT}/auth/logout-all": "as above, and more so",
+    f"POST {API_ROOT}/auth/password": "this is the gate's own exit",
+    f"POST {API_ROOT}/auth/setup": "unauthenticated bootstrap, and a fresh account is "
+                        "never flagged",
+}
+
+
+def _mutating_routes() -> dict[str, object]:
+    """Every route that can write, keyed ``"METHOD /path"`` with ids erased."""
+    routes: dict[str, object] = {}
+    for router in _routers():
+        for route in router.routes:
+            for method in route.methods:
+                if method in ("GET", "HEAD", "OPTIONS"):
+                    continue
+                routes[f"{method} {_shape(API_ROOT + route.path)}"] = route.endpoint
+    return routes
+
+
+def test_the_gate_is_wired_to_every_mutating_route() -> None:
+    """Every mutating route resolves a caller through the default-password gate.
+
+    This check found the gate was inert.  ``require_uncapped`` existed, was
+    documented, and was wired into *nothing*: :data:`UncappedDep` had no
+    callers, and four mutating routes took no caller at all.  An account on the
+    shipped default password could therefore favourite, rate, start a playback
+    session and write watch history -- exactly the state the first-run flow
+    exists to stop somebody else leaving behind -- and every one of those
+    requests was refused with a 403 that nothing could trigger.
+
+    The gate is a per-route dependency rather than middleware so that it reads
+    as part of the route's own signature, where a reader of the handler can see
+    it.  The cost of that choice is that it can be left off by accident, which
+    is what this test is for.
+    """
+    import inspect
+
+    mutating = _mutating_routes()
+    assert set(UNCAPPED_EXEMPT) <= set(mutating), (
+        f"the exemption list names routes that do not exist or are not "
+        f"mutating: {sorted(set(UNCAPPED_EXEMPT) - set(mutating))}"
+    )
+    assert len(mutating) > 20, (
+        f"only {len(mutating)} mutating routes parsed: {sorted(mutating)}.  "
+        f"If this drops, the check below is checking nothing."
+    )
+
+    ungated: list[str] = []
+    for key, endpoint in sorted(mutating.items()):
+        if key in UNCAPPED_EXEMPT:
+            continue
+        names = {
+            getattr(parameter.annotation, "__name__", None)
+            or str(parameter.annotation)
+            for parameter in inspect.signature(endpoint).parameters.values()
+        }
+        if not names & UNCAPPED_ALIASES:
+            ungated.append(key)
+
+    assert not ungated, (
+        f"these mutating routes can be reached by an account that has not "
+        f"changed the shipped default password:\n  " + "\n  ".join(ungated)
+    )
+
+
+def test_per_profile_routes_refuse_an_unnamed_profile() -> None:
+    """Favourites, history and ratings must not answer for a profile nobody chose.
+
+    A session token names an *account*.  Favourites, watch history and ratings
+    are per profile by definition, so a request that names neither the header
+    nor a playback token has to be refused rather than answered with the
+    account's first profile -- two people sharing an account would otherwise see
+    each other's lists, and the client would have no way to tell.
+
+    This is asserted here rather than in one HTTP test because the point is
+    *which routes take the strict dependency*: adding a per-profile route and
+    giving it the lenient one is exactly the mistake that would ship.
+    """
+    import inspect
+
+    strict = "OwnProfileDep"
+    # Every other way a route can resolve a profile.  A route whose answer is
+    # per profile but which takes none of these is not profile-scoped at all,
+    # and that is its own finding rather than this test's subject.
+    lenient = {"ProfileDep", "OwnProfileDep", "StreamProfileDep"}
+    checked: list[str] = []
+
+    for router in _routers():
+        for route in router.routes:
+            names = {
+                getattr(parameter.annotation, "__name__", None)
+                or str(parameter.annotation)
+                for parameter in inspect.signature(route.endpoint).parameters.values()
+            }
+            # The streaming route is profile-scoped too, but it takes the
+            # *stream* alias: it accepts a playback token, which names its own
+            # profile, so it is strict by a different mechanism.
+            if not names & lenient:
+                continue
+            path = _shape(API_ROOT + route.path)
+            # Anything under /library that is not the catalogue, a title's own
+            # metadata, search or a suggestion is per profile by definition.
+            per_profile = (
+                "/favorites" in path or "/history" in path
+                or "/continue-watching" in path or "/rating" in path
+                or path.endswith("/home")
+            )
+            checked.append(path)
+            if per_profile and "StreamProfileDep" not in names:
+                assert strict in names, (
+                    f"{path} answers with per-profile state but takes "
+                    f"{lenient}: a request naming no profile would be answered "
+                    f"with the account's first one."
+                )
+
+    assert len(checked) >= 15, (
+        f"only {len(checked)} profile-scoped routes recognised: {checked}.  "
+        f"If this drops, the check above is checking nothing."
+    )
+    for path in ("/api/v1/library/favorites", "/api/v1/library/history",
+                 "/api/v1/library/home", "/api/v1/library/media/{}/rating"):
+        assert path in checked, f"{path} is no longer profile-scoped at all"
+    # The catalogue is account-scoped and must stay lenient: refusing it would
+    # make the very first request after sign-in an error.
+    assert strict not in {
+        name
+        for router in _routers()
+        for route in router.routes
+        if route.path.endswith("/media")
+        for name in {
+            getattr(parameter.annotation, "__name__", None) or str(parameter.annotation)
+            for parameter in inspect.signature(route.endpoint).parameters.values()
+        }
+    }
+
+
+def test_the_gate_does_not_block_the_streaming_route() -> None:
+    """Streaming is a GET that writes, and it is gated by method alone nowhere.
+
+    ``require_uncapped`` skips GET/HEAD/OPTIONS because the client has to be
+    able to read the library in order to render the change-password screen.
+    Streaming is the exception: it records "started watching" before it serves
+    a byte, so the method test alone would leave the exact state the gate
+    protects writable with no write of its own to intercept.
+    """
+    import inspect
+
+    from streamserver.api import deps
+
+    stream = None
+    for route in media_routes.stream_router.routes:
+        stream = route.endpoint
+        break
+    assert stream is not None, "the streaming route disappeared"
+
+    names = {
+        getattr(parameter.annotation, "__name__", None)
+        or str(parameter.annotation)
+        for parameter in inspect.signature(stream).parameters.values()
+    }
+    assert names & UNCAPPED_ALIASES, (
+        "the streaming route takes no uncapped dependency, so a capped "
+        "account can stream and leave watch history behind"
+    )
+    assert deps._is_stream(_FakeRequest("GET", "/api/v1/stream/7"))
+    assert deps._is_stream(_FakeRequest("GET", "/api/v1/stream"))
+    assert not deps._is_stream(_FakeRequest("GET", "/api/v1/library/media"))
+    assert not deps._is_stream(_FakeRequest("GET", "/api/v1/media/7/poster"))
+
+
+class _FakeRequest:
+    """The two attributes ``_is_stream`` reads, and nothing else.
+
+    Building a real ``Request`` would mean fabricating an ASGI scope, which is
+    most of what the function under test does not look at.
+    """
+
+    def __init__(self, method: str, path: str) -> None:
+        self.method = method
+        self.url = type("URL", (), {"path": path})()
+
+
+# ---------------------------------------------------------------------------
+# The default-password gate
+# ---------------------------------------------------------------------------
+#: The aliases that apply it.  ``require_uncapped`` is reached through one of
+#: these rather than named directly, because a route takes the dependency as an
+#: ``Annotated[...]`` alias -- and under ``from __future__ import annotations``
+#: that alias is a *string* at runtime, which is exactly the trap documented
+#: above: comparing with ``is`` matches nothing and the test passes over an
+#: empty list.
+UNCAPPED_ALIASES = {"UncappedCallerDep", "UncappedStreamCallerDep", "AdminDep"}
+
+#: The routes that are deliberately *not* gated, each with its reason.  Most of
+#: these are not reads at all -- signing out revokes a session row, streaming
+#: records "started watching" -- and refusing them would leave a capped
+#: account unable to *fix* the problem it has.
+UNCAPPED_EXEMPT = {
+    f"POST {API_ROOT}/auth/login": "no caller yet: authentication cannot be refused",
+    f"POST {API_ROOT}/auth/refresh": "the refresh token is the credential, and refusing "
+                          "it would strand the session with no way to renew it",
+    f"POST {API_ROOT}/auth/logout": "revoking a session is the safest thing a capped "
+                         "account can do, and it must work",
+    f"POST {API_ROOT}/auth/logout-all": "as above, and more so",
+    f"POST {API_ROOT}/auth/password": "this is the gate's own exit",
+    f"POST {API_ROOT}/auth/setup": "unauthenticated bootstrap, and a fresh account is "
+                        "never flagged",
+}
+
+
+def _mutating_routes() -> dict[str, object]:
+    """Every route that can write, keyed ``"METHOD /path"`` with ids erased."""
+    routes: dict[str, object] = {}
+    for router in _routers():
+        for route in router.routes:
+            for method in route.methods:
+                if method in ("GET", "HEAD", "OPTIONS"):
+                    continue
+                routes[f"{method} {_shape(API_ROOT + route.path)}"] = route.endpoint
+    return routes
+
+
+def test_the_gate_is_wired_to_every_mutating_route() -> None:
+    """Every mutating route resolves a caller through the default-password gate.
+
+    This check found the gate was inert.  ``require_uncapped`` existed, was
+    documented, and was wired into *nothing*: :data:`UncappedDep` had no
+    callers, and four mutating routes took no caller at all.  An account on the
+    shipped default password could therefore favourite, rate, start a playback
+    session and write watch history -- exactly the state the first-run flow
+    exists to stop somebody else leaving behind -- and every one of those
+    requests was refused with a 403 that nothing could trigger.
+
+    The gate is a per-route dependency rather than middleware so that it reads
+    as part of the route's own signature, where a reader of the handler can see
+    it.  The cost of that choice is that it can be left off by accident, which
+    is what this test is for.
+    """
+    import inspect
+
+    mutating = _mutating_routes()
+    assert set(UNCAPPED_EXEMPT) <= set(mutating), (
+        f"the exemption list names routes that do not exist or are not "
+        f"mutating: {sorted(set(UNCAPPED_EXEMPT) - set(mutating))}"
+    )
+    assert len(mutating) > 20, (
+        f"only {len(mutating)} mutating routes parsed: {sorted(mutating)}.  "
+        f"If this drops, the check below is checking nothing."
+    )
+
+    ungated: list[str] = []
+    for key, endpoint in sorted(mutating.items()):
+        if key in UNCAPPED_EXEMPT:
+            continue
+        names = {
+            getattr(parameter.annotation, "__name__", None)
+            or str(parameter.annotation)
+            for parameter in inspect.signature(endpoint).parameters.values()
+        }
+        if not names & UNCAPPED_ALIASES:
+            ungated.append(key)
+
+    assert not ungated, (
+        f"these mutating routes can be reached by an account that has not "
+        f"changed the shipped default password:\n  " + "\n  ".join(ungated)
+    )
+
+
+def _exempt_key(method: str, path: str) -> set[str]:
+    return {key for key in UNCAPPED_EXEMPT if key == f"{method} {path}"}
+
+
+def test_per_profile_routes_refuse_an_unnamed_profile() -> None:
+    """Favourites, history and ratings must not answer for a profile nobody chose.
+
+    A session token names an *account*.  Favourites, watch history and ratings
+    are per profile by definition, so a request that names neither the header
+    nor a playback token has to be refused rather than answered with the
+    account's first profile -- two people sharing an account would otherwise see
+    each other's lists, and the client would have no way to tell.
+
+    This is asserted here rather than in one HTTP test because the point is
+    *which routes take the strict dependency*: adding a per-profile route and
+    giving it the lenient one is exactly the mistake that would ship.
+    """
+    import inspect
+
+    strict = "OwnProfileDep"
+    # Every other way a route can resolve a profile.  A route whose answer is
+    # per profile but which takes none of these is not profile-scoped at all,
+    # and that is its own finding rather than this test's subject.
+    lenient = {"ProfileDep", "OwnProfileDep", "StreamProfileDep"}
+    checked: list[str] = []
+
+    for router in _routers():
+        for route in router.routes:
+            names = {
+                getattr(parameter.annotation, "__name__", None)
+                or str(parameter.annotation)
+                for parameter in inspect.signature(route.endpoint).parameters.values()
+            }
+            # The streaming route is profile-scoped too, but it takes the
+            # *stream* alias: it accepts a playback token, which names its own
+            # profile, so it is strict by a different mechanism.
+            if not names & lenient:
+                continue
+            path = _shape(API_ROOT + route.path)
+            # Anything under /library that is not the catalogue, a title's own
+            # metadata, search or a suggestion is per profile by definition.
+            per_profile = (
+                "/favorites" in path or "/history" in path
+                or "/continue-watching" in path or "/rating" in path
+                or path.endswith("/home")
+            )
+            checked.append(path)
+            if per_profile and "StreamProfileDep" not in names:
+                assert strict in names, (
+                    f"{path} answers with per-profile state but takes "
+                    f"{lenient}: a request naming no profile would be answered "
+                    f"with the account's first one."
+                )
+
+    assert len(checked) >= 15, (
+        f"only {len(checked)} profile-scoped routes recognised: {checked}.  "
+        f"If this drops, the check above is checking nothing."
+    )
+    for path in ("/api/v1/library/favorites", "/api/v1/library/history",
+                 "/api/v1/library/home", "/api/v1/library/media/{}/rating"):
+        assert path in checked, f"{path} is no longer profile-scoped at all"
+    # The catalogue is account-scoped and must stay lenient: refusing it would
+    # make the very first request after sign-in an error.
+    assert strict not in {
+        name
+        for router in _routers()
+        for route in router.routes
+        if route.path.endswith("/media")
+        for name in {
+            getattr(parameter.annotation, "__name__", None) or str(parameter.annotation)
+            for parameter in inspect.signature(route.endpoint).parameters.values()
+        }
+    }
+
+
+def test_the_gate_does_not_block_the_streaming_route() -> None:
+    """Streaming is a GET that writes, and it is gated by method alone nowhere.
+
+    ``require_uncapped`` skips GET/HEAD/OPTIONS because the client has to be
+    able to read the library in order to render the change-password screen.
+    Streaming is the exception: it records "started watching" before it serves
+    a byte, so the method test alone would leave the exact state the gate
+    protects writable with no write of its own to intercept.
+    """
+    import inspect
+
+    from streamserver.api import deps
+
+    stream = None
+    for route in media_routes.stream_router.routes:
+        stream = route.endpoint
+        break
+    assert stream is not None, "the streaming route disappeared"
+
+    names = {
+        getattr(parameter.annotation, "__name__", None)
+        or str(parameter.annotation)
+        for parameter in inspect.signature(stream).parameters.values()
+    }
+    assert names & UNCAPPED_ALIASES, (
+        "the streaming route takes no uncapped dependency, so a capped "
+        "account can stream and leave watch history behind"
+    )
+    assert deps._is_stream(_FakeRequest("GET", "/api/v1/stream/7"))
+    assert deps._is_stream(_FakeRequest("GET", "/api/v1/stream"))
+    assert not deps._is_stream(_FakeRequest("GET", "/api/v1/library/media"))
+    assert not deps._is_stream(_FakeRequest("GET", "/api/v1/media/7/poster"))
+
+
+class _FakeRequest:
+    """The two attributes ``_is_stream`` reads, and nothing else.
+
+    Building a real ``Request`` would mean fabricating an ASGI scope, which is
+    most of what the function under test does not look at.
+    """
+
+    def __init__(self, method: str, path: str) -> None:
+        self.method = method
+        self.url = type("URL", (), {"path": path})()

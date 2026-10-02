@@ -322,13 +322,18 @@ def test_metadata_patch_rejects_a_bad_date(client, owner, library):
 
 
 def test_deleting_a_media_record_never_deletes_the_file(client, owner, library,
-                                                         library_root):
+                                                         library_root,
+                                                         admin_profile):
     dune = library[0]
     path = Path(library[0]["media_path"]) if library[0].get("media_path") else None
 
     response = client.delete(f"/api/v1/admin/media/{dune['id']}", headers=owner["headers"])
     assert response.status_code == 200
-    assert client.get(f"/api/v1/library/media/{dune['id']}", headers=owner["headers"]
+    # `admin_profile` for the read-back: the route needs a profile named, and a
+    # 400 for "you did not name one" would otherwise pass this assertion for
+    # entirely the wrong reason.
+    assert client.get(f"/api/v1/library/media/{dune['id']}",
+                      headers=admin_profile["headers"]
                       ).status_code in (401, 404)
     del path
 

@@ -400,8 +400,12 @@ def test_health_is_public(client):
     assert response.json()["status"] == "ok"
 
 
-def test_error_bodies_have_the_documented_shape(client, owner):
-    response = client.get("/api/v1/library/media/999999", headers=owner["headers"])
+def test_error_bodies_have_the_documented_shape(client, owner, admin_profile):
+    # `admin_profile` rather than `owner`: every profile-scoped route now
+    # refuses a request that names no profile, so a test that wants the *404*
+    # has to be a request that got past the profile first.
+    response = client.get("/api/v1/library/media/999999",
+                          headers=admin_profile["headers"])
     assert response.status_code == 404
     body = response.json()
     assert set(body) == {"error", "message", "detail", "request_id"}
@@ -429,3 +433,198 @@ def test_cors_is_off_by_default(client, owner):
     assert "access-control-allow-origin" not in {
         k.lower() for k in response.headers
     }
+
+# ---------------------------------------------------------------------------
+# The default-password gate
+#
+# The first-run flow exists so that an account left on the shipped default
+# password cannot quietly leave watch history behind on a shared machine.  The
+# gate was originally opt-in per route, and four mutating routes -- playback
+# start, playback finish, progress and history clear -- never took the
+# dependency, so exactly the state the gate is meant to protect was writable.
+# These tests cover every mutating route rather than a representative few, so
+# the next route added has to be argued for rather than assumed.
+# ---------------------------------------------------------------------------
+def _assert_capable(response):
+    assert response.status_code == 200, response.text
+    return response
+
+
+def test_a_capped_account_can_still_read(client, capped_session, library):
+    """The client has to render the change-password screen, so reads stay open."""
+    assert client.get("/api/v1/library/media",
+                      headers=capped_session["headers"]).status_code == 200
+    assert client.get("/api/v1/auth/me",
+                      headers=capped_session["auth"]).status_code == 200
+
+
+@pytest.mark.parametrize("mutation", [
+    ("PUT",    "/api/v1/library/favorites/{media}", {}),
+    ("DELETE", "/api/v1/library/favorites/{media}", None),
+    ("PUT",    "/api/v1/library/media/{media}/rating", {"score": 8.0}),
+    ("DELETE", "/api/v1/library/media/{media}/rating", None),
+    ("PUT",    "/api/v1/library/history/{media}",
+     {"position_seconds": 30.0, "duration_seconds": 120.0}),
+    ("DELETE", "/api/v1/library/history/{media}", None),
+    ("DELETE", "/api/v1/library/history", None),
+    ("POST",   "/api/v1/media/{media}/playback?start_offset=0", {}),
+    ("POST",   "/api/v1/media/{media}/playback/finish?position_seconds=120", None),
+    ("PUT",    "/api/v1/media/{media}/progress",
+     {"position_seconds": 30.0, "duration_seconds": 120.0}),
+    ("POST",   "/api/v1/profiles", {"name": "Another"}),
+    ("PATCH",  "/api/v1/profiles/{media}", {"name": "Renamed"}),
+    ("POST",   "/api/v1/profiles/reorder", {"profile_ids": []}),
+    ("POST",   "/api/v1/profiles/{media}/pin", {"pin": "4821"}),
+    ("POST",   "/api/v1/profiles/select", {"profile_id": 1}),
+    ("DELETE", "/api/v1/auth/sessions/anything", None),
+])
+def test_a_capped_account_cannot_mutate(client, capped_session, mutation):
+    method, template, body = mutation
+    path = template.format(media=capped_session["media_id"])
+    response = client.request(method, path, headers=capped_session["headers"], json=body)
+    assert response.status_code == 403, f"{method} {path} answered {response.status_code}"
+    assert response.headers.get("X-Requires-Password-Change") == "true"
+
+
+def test_a_capped_account_cannot_stream(client, capped_session):
+    """Streaming is the one GET that writes a history row, so it is gated too."""
+    response = client.get(f"/api/v1/stream/{capped_session['media_id']}",
+                          headers=capped_session["headers"])
+    assert response.status_code == 403
+    assert response.headers.get("X-Requires-Password-Change") == "true"
+
+
+def test_changing_the_password_releases_the_gate(client, capped_session):
+    """The gate has to have an exit, and it has to be the password change."""
+    changed = client.post("/api/v1/auth/password",
+                          headers=capped_session["auth"], json={
+                              "current_password": capped_session["password"],
+                              "new_password": "a-real-password-2026",
+                          })
+    assert changed.status_code == 200, changed.text
+
+    # The old token still works -- the change revokes *other* sessions, not
+    # this one -- and the flag is gone, so mutations succeed immediately.
+    favourite = client.put(
+        f"/api/v1/library/favorites/{capped_session['media_id']}",
+        headers=capped_session["headers"])
+    assert favourite.status_code == 200, favourite.text
+
+
+def test_an_administrator_is_not_locked_out_by_its_own_bootstrap(client, owner,
+                                                                  app, library):
+    """`add-user --admin` leaves an administrator flagged; it must still work.
+
+    This is the real-world shape: the documented first-run is the CLI, and the
+    CLI has no change-password flow, so gating administrators would leave the
+    administrator unable to ever start streaming anything.
+    """
+    from streamserver.db import repositories as repo
+
+    profile_id = repo.list_profiles(app.state.context.db, owner["user_id"])[0]["id"]
+    media_id = repo.list_media(
+        app.state.context.db, repo.MediaFilter(limit=1))[0]["id"]
+    headers = {**owner["headers"], "X-Profile-Id": str(profile_id)}
+
+    response = client.post(f"/api/v1/media/{media_id}/playback?start_offset=0",
+                           headers=headers, json={})
+    assert response.status_code == 200, response.text
+    assert response.json()["playback_token"]
+
+
+# ---------------------------------------------------------------------------
+# The default-password gate
+#
+# The first-run flow exists so that an account left on the shipped default
+# password cannot quietly leave watch history behind on a shared machine.  The
+# gate was originally opt-in per route, and four mutating routes -- playback
+# start, playback finish, progress and history clear -- never took the
+# dependency, so exactly the state the gate is meant to protect was writable.
+# These tests cover every mutating route rather than a representative few, so
+# the next route added has to be argued for rather than assumed.
+# ---------------------------------------------------------------------------
+def _assert_capable(response):
+    assert response.status_code == 200, response.text
+    return response
+
+
+def test_a_capped_account_can_still_read(client, capped_session, library):
+    """The client has to render the change-password screen, so reads stay open."""
+    assert client.get("/api/v1/library/media",
+                      headers=capped_session["headers"]).status_code == 200
+    assert client.get("/api/v1/auth/me",
+                      headers=capped_session["auth"]).status_code == 200
+
+
+@pytest.mark.parametrize("mutation", [
+    ("PUT",    "/api/v1/library/favorites/{media}", {}),
+    ("DELETE", "/api/v1/library/favorites/{media}", None),
+    ("PUT",    "/api/v1/library/media/{media}/rating", {"score": 8.0}),
+    ("DELETE", "/api/v1/library/media/{media}/rating", None),
+    ("PUT",    "/api/v1/library/history/{media}",
+     {"position_seconds": 30.0, "duration_seconds": 120.0}),
+    ("DELETE", "/api/v1/library/history/{media}", None),
+    ("DELETE", "/api/v1/library/history", None),
+    ("POST",   "/api/v1/media/{media}/playback?start_offset=0", {}),
+    ("POST",   "/api/v1/media/{media}/playback/finish?position_seconds=120", None),
+    ("PUT",    "/api/v1/media/{media}/progress",
+     {"position_seconds": 30.0, "duration_seconds": 120.0}),
+    ("POST",   "/api/v1/profiles", {"name": "Another"}),
+    ("PATCH",  "/api/v1/profiles/{media}", {"name": "Renamed"}),
+    ("POST",   "/api/v1/profiles/reorder", {"profile_ids": []}),
+    ("POST",   "/api/v1/profiles/{media}/pin", {"pin": "4821"}),
+    ("POST",   "/api/v1/profiles/select", {"profile_id": 1}),
+    ("DELETE", "/api/v1/auth/sessions/anything", None),
+])
+def test_a_capped_account_cannot_mutate(client, capped_session, mutation):
+    method, template, body = mutation
+    path = template.format(media=capped_session["media_id"])
+    response = client.request(method, path, headers=capped_session["headers"], json=body)
+    assert response.status_code == 403, f"{method} {path} answered {response.status_code}"
+    assert response.headers.get("X-Requires-Password-Change") == "true"
+
+
+def test_a_capped_account_cannot_stream(client, capped_session):
+    """Streaming is the one GET that writes a history row, so it is gated too."""
+    response = client.get(f"/api/v1/stream/{capped_session['media_id']}",
+                          headers=capped_session["headers"])
+    assert response.status_code == 403
+    assert response.headers.get("X-Requires-Password-Change") == "true"
+
+
+def test_changing_the_password_releases_the_gate(client, capped_session):
+    """The gate has to have an exit, and it has to be the password change."""
+    changed = client.post("/api/v1/auth/password",
+                          headers=capped_session["auth"], json={
+                              "current_password": capped_session["password"],
+                              "new_password": "a-real-password-2026",
+                          })
+    assert changed.status_code == 200, changed.text
+
+    # The old token still works -- the change revokes *other* sessions, not
+    # this one -- and the flag is gone, so mutations succeed immediately.
+    favourite = client.put(
+        f"/api/v1/library/favorites/{capped_session['media_id']}",
+        headers=capped_session["headers"])
+    assert favourite.status_code == 200, favourite.text
+
+
+def test_an_administrator_is_not_locked_out_by_its_own_bootstrap(client, owner,
+                                                                  app, library):
+    """`add-user --admin` leaves an administrator flagged; it must still work.
+
+    This is the real-world shape: the documented first-run is the CLI, and the
+    CLI has no change-password flow, so gating administrators would leave the
+    administrator unable to ever start streaming anything.
+    """
+    from streamserver.db import repositories as repo
+
+    profile_id = repo.list_profiles(app.state.context.db, owner["user_id"])[0]["id"]
+    media_id = repo.list_media(
+        app.state.context.db, repo.MediaFilter(limit=1))[0]["id"]
+    headers = {**owner["headers"], "X-Profile-Id": str(profile_id)}
+
+    response = client.post(f"/api/v1/media/{media_id}/playback?start_offset=0",
+                           headers=headers, json={})
+    assert response.status_code == 200, response.text
+    assert response.json()["playback_token"]

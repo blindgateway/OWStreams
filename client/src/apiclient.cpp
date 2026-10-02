@@ -44,11 +44,13 @@ ApiClient::ApiClient(QObject *parent)
 
 void ApiClient::syncCredentials()
 {
-    auto *manager = static_cast<CredentialAccessManager *>(m_manager);
     if (m_accessToken.isEmpty())
-        manager->clearCredentials();
+        m_manager->clearCredentials();
     else
-        manager->setCredentials(m_baseUrl, m_accessToken);
+        m_manager->setCredentials(m_baseUrl, m_accessToken);
+    // The streaming route is profile-scoped and its request is made by the
+    // media backend, so the manager needs the profile as well as the token.
+    m_manager->setProfileId(m_profileId);
 }
 
 ApiClient::~ApiClient() = default;
@@ -71,6 +73,9 @@ void ApiClient::setProfileId(int id)
     if (m_profileId == id)
         return;
     m_profileId = id;
+    // The access manager carries it for the streaming route, whose request
+    // never goes through `send()`.
+    syncCredentials();
     emit profileChanged();
 }
 
@@ -90,6 +95,7 @@ void ApiClient::clearSession()
     m_accessToken.clear();
     m_refreshToken.clear();
     m_playbackToken.clear();
+    m_hasPlaybackSession = false;
     m_playbackMediaId = 0;
     m_username.clear();
     m_profileId = 0;
@@ -112,10 +118,24 @@ void ApiClient::clearSession()
 
 QUrl ApiClient::streamUrl(int mediaId) const
 {
-    if (m_playbackToken.isEmpty() || m_playbackMediaId != mediaId)
+    // Deliberately ignores `m_playbackToken`.  The server accepts a playback
+    // token in the Authorization header as well as a session one, and this
+    // application streams with the session token: a client-side expiry clock
+    // would have to agree with the server's to be safe, and a wrong answer
+    // either refuses to play a valid token or -- worse -- keeps playing one the
+    // server has already expired.  The server is the only authority on that,
+    // and a 403 from it ends playback like any other authorisation failure.
+    if (!m_hasPlaybackSession || m_playbackMediaId != mediaId)
         return {};
     return QUrl(m_baseUrl + kApiRoot + QStringLiteral("/stream/")
                 + QString::number(mediaId));
+}
+
+QString ApiClient::authorizationHeader() const
+{
+    if (m_accessToken.isEmpty())
+        return {};
+    return QStringLiteral("Bearer ") + m_accessToken;
 }
 
 QUrl ApiClient::artworkUrl(int mediaId, const QString &kind, bool hasPosterKey) const
@@ -154,21 +174,38 @@ QNetworkReply *ApiClient::send(const Pending &request, const QString &bearerToke
     // one is a silent no-op rather than an error the UI could show.
     //
     // The check is on the *route path*, not on a prefix list kept elsewhere:
-    // the three profile-scoped roots are /profiles, /library and /media, and
-    // anything added under them inherits the header automatically.  An
-    // earlier version tested only "/library", so the playback routes and every
-    // profile call went out unscoped and the server had no profile to resolve.
-    if (m_profileId > 0 && request.auth != Auth::None
-        && (request.path.startsWith(QStringLiteral("/library"))
-            || request.path.startsWith(QStringLiteral("/profiles"))
-            || request.path.startsWith(QStringLiteral("/media")))) {
+    // the profile-scoped roots are /library, /profiles, /media and /stream, and
+    // anything added under them inherits the header automatically.  An earlier
+    // version listed only /library, so the playback routes and every profile
+    // call went out unscoped and the server had no profile to resolve.
+    // `kApiRoot` is stripped before the comparison.  A path is
+    // `/api/v1/library/favorites`, so testing it for a prefix of `/library`
+    // is false for *every* profile-scoped route -- the header was never
+    // written, and the server fell back to the account's first profile for
+    // every library read.  The prefix list is written against the API root so
+    // the two cannot drift: it says "the route is under /library", not "the
+    // string begins with /library".
+    const QString route = request.path.startsWith(kApiRoot)
+                              ? request.path.mid(kApiRoot.size())
+                              : request.path;
+    if (request.auth != Auth::None
+        && (route.startsWith(QLatin1String("/library"))
+            || route.startsWith(QLatin1String("/profiles"))
+            || route.startsWith(QLatin1String("/media"))
+            || route.startsWith(QLatin1String("/stream")))) {
+        // Always set, including to "0".  Leaving the header off when no
+        // profile is selected used to look equivalent and was not: the server
+        // then resolved the account's *first* profile and answered 200, so a
+        // request made before a profile was chosen silently returned another
+        // profile's favourites, history and ratings.  Naming "0" is refused
+        // (`profile_not_found`), which is a failure a person can see.
         netRequest.setRawHeader("X-Profile-Id", QByteArray::number(m_profileId));
     }
 
     const QByteArray payload =
         request.body.isEmpty() ? QByteArray()
                                : QJsonDocument(request.body).toJson(QJsonDocument::Compact);
-    if (!payload.isEmpty())
+    if (!payload.isEmpty() || request.emptyBodyIsJson)
         netRequest.setHeader(QNetworkRequest::ContentTypeHeader,
                              QByteArrayLiteral("application/json; charset=utf-8"));
 
@@ -264,18 +301,31 @@ void ApiClient::handle(QNetworkReply *reply, const Pending &pending)
         } else if (pending.operation == QLatin1String("library.history.clear")) {
             emit historyCleared();
         } else if (pending.operation == QLatin1String("library.history.remove")) {
-            emit historyEntryRemoved(
-                pending.body.value(QStringLiteral("media_id")).toInt());
+            emit historyEntryRemoved(pending.mediaId);
         } else if (pending.operation == QLatin1String("library.favorite.put")) {
-            emit favoriteChanged(pending.body.value(QStringLiteral("media_id")).toInt(),
-                                 pending.body.value(QStringLiteral("favorite")).toBool());
+            // The intent comes out of the verb, because the request carries no
+            // body: `/favorites/42` with PUT is "make 42 a favourite", DELETE
+            // is "not any more".
+            emit favoriteChanged(pending.mediaId,
+                                 pending.verb == QByteArrayLiteral("PUT"));
         } else if (pending.operation == QLatin1String("library.rating.put")) {
-            emit ratingChanged(pending.body.value(QStringLiteral("media_id")).toInt(),
+            emit ratingChanged(pending.mediaId,
                               pending.body.value(QStringLiteral("score")).toDouble());
         } else if (pending.operation == QLatin1String("playback.start")) {
             m_playbackToken = object.value(QStringLiteral("playback_token")).toString();
+            m_hasPlaybackSession = !m_playbackToken.isEmpty();
             m_playbackSessionId = object.value(QStringLiteral("session_id")).toString();
-            m_playbackMediaId = pending.body.value(QStringLiteral("media_id")).toInt();
+            m_playbackMediaId = pending.mediaId;
+            // The media id is stamped *before* the URL is built, not after.
+            //
+            // Order of operations that reads like a style choice and is not:
+            // `streamUrl` hands back an empty QUrl for any id that is not the
+            // current one, and the id was being assigned after the call, so
+            // every successful playback announced an empty URL.  The player
+            // reads that as "the server did not return a playable source" and
+            // reports a playback failure for a title the server had just
+            // happily authorised.  Nothing failed visibly, which is why it
+            // survived as long as it did.
             // The URL is deliberately bare.  The server accepts an access
             // token *or* a playback token in the header, and the playback
             // token is the narrower one -- it is bound to this title and to
@@ -287,9 +337,11 @@ void ApiClient::handle(QNetworkReply *reply, const Pending &pending)
                                  object.value(QStringLiteral("start_offset")).toDouble(),
                                  object.value(QStringLiteral("expires_in")).toInt());
         } else if (pending.operation == QLatin1String("playback.progress")) {
-            emit progressReported(pending.body.value(QStringLiteral("media_id")).toInt(),
+            emit progressReported(pending.mediaId,
                                   pending.body.value(QStringLiteral("position_seconds")).toDouble());
         } else if (pending.operation == QLatin1String("playback.finish")) {
+            const int mediaId = pending.mediaId;
+            m_hasPlaybackSession = false;
             m_playbackToken.clear();
             m_playbackSessionId.clear();
             m_playbackMediaId = 0;
@@ -297,10 +349,10 @@ void ApiClient::handle(QNetworkReply *reply, const Pending &pending)
             // close, so a caller that did not see it cannot tell one apart from
             // a player that was simply torn down.
             emit playbackFinished(FinishedPlayback{
-                pending.body.value(QStringLiteral("media_id")).toInt(),
+                mediaId,
                 pending.query.queryItemValue(QStringLiteral("position_seconds"),
                                              QUrl::FullyDecoded).toDouble(),
-                pending.body.value(QStringLiteral("session_id")).toString()});
+                pending.query.queryItemValue(QStringLiteral("session_id"))});
         } else if (pending.operation == QLatin1String("profiles.list")) {
             // The route answers a bare array.  An earlier version read
             // object["profiles"] and therefore always reported an empty list,
@@ -314,9 +366,8 @@ void ApiClient::handle(QNetworkReply *reply, const Pending &pending)
             patchCachedProfile(profile);
             emit profileUpdated(profile.value(QStringLiteral("id")).toInt(), profile);
         } else if (pending.operation == QLatin1String("profiles.delete")) {
-            const int id = pending.body.value(QStringLiteral("profile_id")).toInt();
-            removeCachedProfile(id);
-            emit profileDeleted(id);
+            removeCachedProfile(pending.mediaId);
+            emit profileDeleted(pending.mediaId);
         } else if (pending.operation == QLatin1String("profiles.pin.set")) {
             const QJsonObject profile = object;
             patchCachedProfile(profile);
@@ -332,7 +383,7 @@ void ApiClient::handle(QNetworkReply *reply, const Pending &pending)
             emit sessionsChanged();
             emit sessionsLoaded(list);
         } else if (pending.operation == QLatin1String("sessions.revoke")) {
-            const QString id = pending.body.value(QStringLiteral("session_id")).toString();
+            const QString id = pending.path.section(QLatin1Char('/'), -1);
             for (int i = 0; i < m_sessions.size(); ++i) {
                 if (m_sessions.at(i).toMap().value(QStringLiteral("id")).toString() == id)
                     m_sessions.removeAt(i);
@@ -344,11 +395,20 @@ void ApiClient::handle(QNetworkReply *reply, const Pending &pending)
             emit loggedOut();
             emit loggedOutEverywhere();
         } else if (pending.operation == QLatin1String("profiles.select")) {
+            // `/profiles/select` names no id in its path -- it is a payload,
+            // not a path parameter -- so this one genuinely is the body's.
             emit profileSelected(pending.body.value(QStringLiteral("profile_id")).toInt());
         } else if (pending.operation == QLatin1String("profiles.unlock")) {
-            emit profileUnlocked(pending.body.value(QStringLiteral("profile_id")).toInt());
+            // The id is the pending request's own, not a re-read of the path:
+            // an unlock is for *this* profile, and `/profiles/{id}/unlock` ends
+            // in the verb.  Taking the trailing segment announced profile 0 --
+            // and `selectProfile` below then adopted it, so unlocking a PIN
+            // profile signed you in as no profile at all and every later
+            // request went out without the header the server needs.
+            emit profileUnlocked(pending.mediaId);
         } else if (pending.operation == QLatin1String("profiles.create")) {
-            emit profileCreated(pending.body.value(QStringLiteral("profile_id")).toInt());
+            // The body carries only the name; the id is the answer's.
+            emit profileCreated(object.value(QStringLiteral("id")).toInt());
         }
         return;
     }
@@ -693,8 +753,13 @@ void ApiClient::setFavorite(int mediaId, bool favorite)
     request.path = kApiRoot + QStringLiteral("/library/favorites/") +
                    QString::number(mediaId);
     request.auth = Auth::Session;
+    // No body: the media id is in the path and the verb already says whether
+    // this is adding or removing.  `OkResponse` is a `StrictModel`, so the two
+    // extra fields made every favourite toggle a 422 -- and the favourite rail
+    // updated anyway, because `handle()` reports the *intent* rather than the
+    // server's answer.
+    request.mediaId = mediaId;
     request.operation = QStringLiteral("library.favorite.put");
-    request.body = {{QStringLiteral("media_id"), mediaId}, {QStringLiteral("favorite"), favorite}};
     QNetworkReply *reply = send(request, m_accessToken);
     connect(reply, &QNetworkReply::finished, this, [this, reply, request] {
         reply->deleteLater();
@@ -713,8 +778,9 @@ void ApiClient::rateMedia(int mediaId, double score)
     request.verb = "PUT";
     request.path = kApiRoot + QStringLiteral("/library/media/") +
                    QString::number(mediaId) + QStringLiteral("/rating");
-    request.body = {{QStringLiteral("media_id"), mediaId}, {QStringLiteral("score"), score}};
+    request.body = {{QStringLiteral("score"), score}};
     request.auth = Auth::Session;
+    request.mediaId = mediaId;
     request.operation = QStringLiteral("library.rating.put");
     QNetworkReply *reply = send(request, m_accessToken);
     connect(reply, &QNetworkReply::finished, this, [this, reply, request] {
@@ -731,8 +797,12 @@ void ApiClient::startPlayback(int mediaId, double startOffset)
                    QString::number(mediaId) + QStringLiteral("/playback");
     request.query = QUrlQuery{{QStringLiteral("start_offset"),
                                QString::number(startOffset, 'f', 3)}};
-    request.body = {{QStringLiteral("media_id"), mediaId}};
+    // No body: the route takes its offset as a query parameter.  The content
+    // type is still declared, because Qt 6 warns about it on every POST whose
+    // body is empty and a warning per playback start is noise nobody reads.
+    request.emptyBodyIsJson = true;
     request.auth = Auth::Session;
+    request.mediaId = mediaId;
     request.operation = QStringLiteral("playback.start");
     QNetworkReply *reply = send(request, m_accessToken);
     connect(reply, &QNetworkReply::finished, this, [this, reply, request] {
@@ -748,10 +818,22 @@ void ApiClient::reportProgress(int mediaId, double positionSeconds,
     request.verb = "PUT";
     request.path = kApiRoot + QStringLiteral("/media/") +
                    QString::number(mediaId) + QStringLiteral("/progress");
-    request.body = {{QStringLiteral("media_id"), mediaId},
-                    {QStringLiteral("position_seconds"), positionSeconds},
+    // No `media_id` in the body: it is already in the path, and
+    // `ProgressUpdate` is a `StrictModel` with `extra="forbid"`, so the server
+    // answered 422 to every progress report.  The `media_id` that came back was
+    // always the path's, which is how this stayed invisible -- the report was
+    // rejected and `PlaybackController` deliberately ignores progress
+    // failures, so nothing ever surfaced.
+    request.body = {{QStringLiteral("position_seconds"), positionSeconds},
                     {QStringLiteral("duration_seconds"), durationSeconds}};
+    // Qt 6 logs `content-type missing in HTTP POST` for a POST whose body is
+    // an empty QVariantMap, and the server does not care -- but a warning on
+    // every progress report is the kind of noise that teaches people to ignore
+    // warnings.  Declared explicitly, it is not a lie: `send` replaces the type
+    // with `application/json; charset=utf-8` as soon as there is a payload.
+    request.emptyBodyIsJson = true;
     request.auth = Auth::Session;
+    request.mediaId = mediaId;
     request.operation = QStringLiteral("playback.progress");
     QNetworkReply *reply = send(request, m_accessToken);
     connect(reply, &QNetworkReply::finished, this, [this, reply, request] {
@@ -772,11 +854,19 @@ void ApiClient::finishPlayback(int mediaId, double positionSeconds,
     request.verb = "POST";
     request.path = kApiRoot + QStringLiteral("/media/") +
                    QString::number(mediaId) + QStringLiteral("/playback/finish");
+    // The route takes *no* body at all -- both values are query parameters --
+    // so an empty body with the parameters in the query is the whole contract.
+    // Sending `media_id` in the body was ignored, which is why a body here at
+    // all is worth removing: it is one more thing that can drift from the
+    // route without anything noticing.
     request.query = QUrlQuery{{QStringLiteral("position_seconds"),
                                QString::number(positionSeconds, 'f', 3)}};
-    request.body = {{QStringLiteral("media_id"), mediaId},
-                    {QStringLiteral("session_id"), id}};
+    if (!id.isEmpty())
+        request.query.addQueryItem(QStringLiteral("session_id"), id);
+    request.body = QJsonObject();
+    request.emptyBodyIsJson = true;
     request.auth = Auth::Session;
+    request.mediaId = mediaId;
     request.operation = QStringLiteral("playback.finish");
     QNetworkReply *reply = send(request, m_accessToken);
     connect(reply, &QNetworkReply::finished, this, [this, reply, request] {
@@ -804,6 +894,11 @@ void ApiClient::selectProfile(int profileId)
     Pending request;
     request.verb = "POST";
     request.path = kApiRoot + QStringLiteral("/profiles/select");
+    // The body, because the route names no id in its path.  This is the one
+    // request where the id *is* a payload: `ProfileSelection` is a `StrictModel`
+    // with `profile_id: int = Field(ge=1)`, so an empty body is a 422 and the
+    // profile switch silently never happens -- the session machine waits for
+    // `profileSelected`, which then never comes.
     request.body = {{QStringLiteral("profile_id"), profileId}};
     request.auth = Auth::Session;
     request.operation = QStringLiteral("profiles.select");
@@ -820,9 +915,9 @@ void ApiClient::unlockProfile(int profileId, const QString &pin)
     request.verb = "POST";
     request.path = kApiRoot + QStringLiteral("/profiles/") +
                    QString::number(profileId) + QStringLiteral("/unlock");
-    request.body = {{QStringLiteral("profile_id"), profileId},
-                    {QStringLiteral("pin"), pin}};
+    request.body = {{QStringLiteral("pin"), pin}};
     request.auth = Auth::Session;
+    request.mediaId = profileId;
     request.operation = QStringLiteral("profiles.unlock");
     QNetworkReply *reply = send(request, m_accessToken);
     connect(reply, &QNetworkReply::finished, this, [this, reply, request] {
@@ -871,8 +966,8 @@ void ApiClient::deleteProfile(int profileId)
     request.verb = "DELETE";
     request.path = kApiRoot + QStringLiteral("/profiles/") + QString::number(profileId);
     request.auth = Auth::Session;
-    request.operation = QStringLiteral("profiles.delete");
-    request.body = {{QStringLiteral("profile_id"), profileId}};
+        request.mediaId = profileId;
+request.operation = QStringLiteral("profiles.delete");
     QNetworkReply *reply = send(request, m_accessToken);
     connect(reply, &QNetworkReply::finished, this, [this, reply, request] {
         reply->deleteLater();
@@ -897,7 +992,8 @@ void ApiClient::setProfilePin(int profileId, const QString &pin,
                    + QStringLiteral("/pin");
     request.body = body;
     request.auth = Auth::Session;
-    request.operation = QStringLiteral("profiles.pin.set");
+        request.mediaId = profileId;
+request.operation = QStringLiteral("profiles.pin.set");
     QNetworkReply *reply = send(request, m_accessToken);
     connect(reply, &QNetworkReply::finished, this, [this, reply, request] {
         reply->deleteLater();
@@ -915,7 +1011,8 @@ void ApiClient::changeProfilePin(int profileId, const QString &currentPin,
     request.body = {{QStringLiteral("current_pin"), currentPin},
                     {QStringLiteral("new_pin"), newPin}};
     request.auth = Auth::Session;
-    request.operation = QStringLiteral("profiles.pin.change");
+        request.mediaId = profileId;
+request.operation = QStringLiteral("profiles.pin.change");
     QNetworkReply *reply = send(request, m_accessToken);
     connect(reply, &QNetworkReply::finished, this, [this, reply, request] {
         reply->deleteLater();
@@ -942,7 +1039,6 @@ void ApiClient::revokeSession(const QString &sessionId)
     Pending request;
     request.verb = "DELETE";
     request.path = kApiRoot + QStringLiteral("/auth/sessions/") + sessionId;
-    request.body = {{QStringLiteral("session_id"), sessionId}};
     request.auth = Auth::Session;
     request.operation = QStringLiteral("sessions.revoke");
     QNetworkReply *reply = send(request, m_accessToken);
@@ -985,8 +1081,8 @@ void ApiClient::removeHistoryEntry(int mediaId)
     Pending request;
     request.verb = "DELETE";
     request.path = kApiRoot + QStringLiteral("/library/history/") + QString::number(mediaId);
-    request.body = {{QStringLiteral("media_id"), mediaId}};
     request.auth = Auth::Session;
+    request.mediaId = mediaId;
     request.operation = QStringLiteral("library.history.remove");
     QNetworkReply *reply = send(request, m_accessToken);
     connect(reply, &QNetworkReply::finished, this, [this, reply, request] {

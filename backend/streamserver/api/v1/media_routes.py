@@ -29,8 +29,9 @@ from ..deps import (
     CallerDep,
     Ctx,
     ProfileDep,
-    StreamCallerDep,
     StreamProfileDep,
+    UncappedCallerDep,
+    UncappedStreamCallerDep,
     _enforce_limit,
 )
 
@@ -60,8 +61,9 @@ PLAYBACK_SESSION_TTL = 6 * 3600   # 6 hours
 @router.post("/{media_id}/playback", response_model=PlaybackTokenOut,
              summary="Mint a short-lived token for streaming one title")
 async def start_playback(media_id: MediaPathId, request: Request, context: Ctx,
-                         caller: CallerDep, profile_id: ProfileDep,
-                         start_offset: Annotated[float, Query(ge=0)] = 0.0) -> PlaybackTokenOut:
+                         caller: UncappedCallerDep, profile_id: ProfileDep,
+                         start_offset: Annotated[float, Query(ge=0)] = 0.0,
+                         ) -> PlaybackTokenOut:
     media = repo.get_media_full(context.db, media_id)
     if not media or media.get("hidden"):
         raise HTTPException(status_code=404, detail="Media not found.")
@@ -116,7 +118,7 @@ async def start_playback(media_id: MediaPathId, request: Request, context: Ctx,
 @router.post("/{media_id}/playback/finish", response_model=OkResponse,
              summary="End a playback session and mark the title watched")
 async def finish_playback(media_id: MediaPathId, request: Request, context: Ctx,
-                          caller: CallerDep, profile_id: ProfileDep,
+                          caller: UncappedCallerDep, profile_id: ProfileDep,
                           position_seconds: Annotated[float, Query(ge=0)] = 0.0,
                           session_id: str | None = None) -> OkResponse:
     if session_id:
@@ -153,7 +155,7 @@ async def get_progress(media_id: MediaPathId, context: Ctx, profile_id: ProfileD
 @router.put("/{media_id}/progress", response_model=ProgressOut,
             summary="Report playback progress (sent periodically by the client)")
 async def put_progress(media_id: MediaPathId, payload: ProgressUpdate, context: Ctx,
-                       profile_id: ProfileDep) -> ProgressOut:
+                       profile_id: ProfileDep, caller: UncappedCallerDep) -> ProgressOut:
     result = context.history.record_progress(
         profile_id, media_id,
         position_seconds=payload.position_seconds,
@@ -232,7 +234,7 @@ async def stream(
     request: Request,
     context: Ctx,
     profile_id: StreamProfileDep,
-    caller: StreamCallerDep,
+    caller: UncappedStreamCallerDep,
 ) -> Response:
     """Serve media bytes.
 

@@ -344,6 +344,11 @@ QUrl AppController::baseUrl() const
     return QUrl(m_api->baseUrl());
 }
 
+void AppController::refreshLibrary()
+{
+    requestLibraryPage(false);
+}
+
 void AppController::openDetail(int mediaId)
 {
     setBusy(true);

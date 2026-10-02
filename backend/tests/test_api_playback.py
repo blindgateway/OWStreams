@@ -346,3 +346,97 @@ def test_an_unknown_playback_session_is_404(client, library, admin_profile):
                            headers=admin_profile["headers"],
                            params={"session_id": "not-a-session"})
     assert response.status_code == 404
+
+
+# ---------------------------------------------------------------------------
+# The streaming route is a GET that writes
+#
+# Everything above treats `/api/v1/stream/{id}` as a read, which is true of its
+# method and false of its effect: it records "started watching" in the history
+# and touches the playback session before it serves a byte.  Three separate
+# places decide what counts as a stream -- the request logger, the default
+# password gate and the client's access manager -- and each of them tests the
+# path differently.  A rule that holds for two of them and not the third is
+# invisible until a login is rate-limited by its own playback, which is exactly
+# what happened before these tests.
+# ---------------------------------------------------------------------------
+@pytest.mark.parametrize("path", [
+    "/api/v1/stream/1",
+    "/api/v1/stream/1/",
+    "/api/v1/stream",
+])
+def test_the_streaming_route_is_recognised_by_its_path(path):
+    from streamserver.api import deps
+
+    class Request:
+        method = "GET"
+        url = type("URL", (), {"path": path})()
+
+    assert deps._is_stream(Request())
+
+
+@pytest.mark.parametrize("path", [
+    "/api/v1/library/media",
+    "/api/v1/media/1/poster",
+    "/api/v1/media/1/playback",
+    "/api/v1/auth/me",
+])
+def test_ordinary_routes_are_not_mistaken_for_the_stream(path):
+    from streamserver.api import deps
+
+    class Request:
+        method = "GET"
+        url = type("URL", (), {"path": path})()
+
+    assert not deps._is_stream(Request())
+
+
+def test_a_library_read_is_not_folded_into_a_stream_log_line(client, library,
+                                                              admin_profile, caplog):
+    """The per-request log line must come back for ordinary reads.
+
+    Streaming folds thousands of chunk requests into one summary, so the test
+    is that a *library* read is not folded with one: the symptom of a wrong
+    rule here is not an error but a server whose log is silently empty, which
+    is a very quiet way for the audit trail to stop being an audit trail.
+    """
+    import logging
+
+    with caplog.at_level(logging.INFO):
+        assert client.get("/api/v1/library/media",
+                          headers=admin_profile["headers"]).status_code == 200
+    assert any("GET /api/v1/library/media" in record.getMessage()
+               for record in caplog.records), (
+        f"no request log line for a library read: "
+        f"{[r.getMessage() for r in caplog.records]}"
+    )
+
+
+def test_a_stream_is_not_logged_one_line_per_chunk(client, library, admin_profile,
+                                                   caplog):
+    import logging
+
+    token = client.post(f"/api/v1/media/{library[0]['id']}/playback",
+                        headers=admin_profile["headers"]).json()["playback_token"]
+    headers = {"Authorization": f"Bearer {token}",
+               "X-Profile-Id": str(admin_profile["id"])}
+
+    with caplog.at_level(logging.INFO):
+        for _ in range(3):
+            assert client.get(f"/api/v1/stream/{library[0]['id']}",
+                              headers=headers).status_code == 200
+
+    lines = [record.getMessage() for record in caplog.records
+             if record.name == "streamserver.api"]
+    summary = [line for line in lines
+               if line.startswith("stream ") and "cumulative=" in line]
+    per_request = [line for line in lines
+                   if line.startswith("GET ") and "/api/v1/stream/" in line]
+    assert summary, (
+        f"three streaming requests produced no summary at all, so the folding "
+        f"is not running: {lines}"
+    )
+    assert not per_request, (
+        f"each streaming request also produced its own line, which is what "
+        f"fills the disk on a feature film: {per_request}"
+    )

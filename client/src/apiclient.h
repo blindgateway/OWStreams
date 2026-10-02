@@ -1,5 +1,7 @@
 #pragma once
 
+#include "credentialaccessmanager.h"
+
 #include <QByteArray>
 #include <QJsonArray>
 #include <QJsonObject>
@@ -148,6 +150,15 @@ public:
     /// Empty when there is no playback token for that title.
     QUrl streamUrl(int mediaId) const;
 
+    /// `"Bearer <access token>"`, for a caller that has to send the credential
+    /// itself -- a raw HTTP check in the end-to-end suite, or a download.
+    ///
+    /// Deliberately the whole header value rather than the bare token: every
+    /// caller of this wants the same string, and the one place that decides
+    /// what a bearer credential looks like should be the client that issues
+    /// them.  Empty when there is no session.
+    QString authorizationHeader() const;
+
     /// What `playbackFinished` carries.  Published because it is the only way a
     /// caller -- or a test -- can observe that a close was requested without a
     /// server to answer it, and because a signal that names its own payload type
@@ -167,6 +178,17 @@ public:
     /// which titles have posters would be a second source of truth the moment
     /// the server's answer changed.
     QUrl artworkUrl(int mediaId, const QString &kind, bool hasPosterKey = true) const;
+
+    /// Whether the access manager would attach a credential to `url`.
+    ///
+    /// Exposed because "this request would carry the user's bearer token" is a
+    /// security property, and reasoning about it from the two halves -- the
+    /// caller's intent and the manager's scope -- is how the two drifted apart
+    /// without anything noticing.
+    bool wouldAuthenticate(const QUrl &url) const
+    {
+        return m_manager->wouldAuthenticate(url);
+    }
 
 signals:
     void baseUrlChanged();
@@ -227,13 +249,31 @@ signals:
 private:
     enum class Auth { None, Session, Playback };
 
+    /// One in-flight request, kept so its answer can be interpreted.
+    ///
+    /// `mediaId` is set by the operations whose answer refers to a title, and
+    /// `handle` falls back to the last path segment when it is zero.  That
+    /// fallback is right for most routes and wrong for three: the playback
+    /// routes carry the media id in the path *and* in a segment that is not
+    /// last (`/media/7/playback/finish`, where the last segment is the verb).
+    /// Reading the trailing segment there made every `playbackFinished`
+    /// announce id 0, and `finish` 404s an id no title has -- so closing a
+    /// playback session never recorded that it had been watched.  The rule is
+    /// therefore stated per-request rather than inferred per-route.
     struct Pending {
+        /// The title this request is about.  Zero means "read it off the path".
+        int mediaId = 0;
+
         QByteArray verb;
         QString path;
         QJsonObject body;
         Auth auth = Auth::None;
         QString operation;
         QUrlQuery query;
+        /// Declare `Content-Type: application/json` even when the body is
+        /// empty.  Two routes take no body at all -- finishing a playback and
+        /// starting one -- and Qt 6 warns about the missing type on every one.
+        bool emptyBodyIsJson = false;
     };
 
     void checkSetupStatus();
@@ -261,11 +301,20 @@ private:
     QString m_serverVersion;
     QString m_playbackSessionId;
 
-    QNetworkAccessManager *m_manager;
+    /// The access manager, typed.
+    ///
+    /// `QNetworkAccessManager` is all `createRequest` overrides, so every use
+    /// of it here needed a cast back to the class that actually does anything.
+    CredentialAccessManager *m_manager = nullptr;
     QString m_baseUrl;
     QString m_accessToken;
     QString m_refreshToken;
     QString m_playbackToken;
+    /// Whether a playback session has been minted and not yet closed.
+    ///
+    /// Separate from `m_playbackToken` because the token is deliberately *not*
+    /// used to decide whether streaming is allowed -- see `streamUrl`.
+    bool m_hasPlaybackSession = false;
     int m_playbackMediaId = 0;
     QString m_username;
     int m_profileId = 0;

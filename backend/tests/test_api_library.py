@@ -448,10 +448,49 @@ def test_history_is_invisible_to_another_account(client, library, owner,
 
 
 def test_another_account_cannot_clear_my_history(client, library, owner,
-                                                 second_session):
+                                                 second_session,
+                                                 admin_profile):
+    """One account's clear must not touch another's history.
+
+    `admin_profile` carries the profile header this route now requires; the
+    assertion used to read back through the bare owner headers, which now stops
+    at the profile check rather than at the history.
+    """
     dune = library[0]
-    client.put(f"/api/v1/library/history/{dune['id']}", headers=owner["headers"],
+    client.put(f"/api/v1/library/history/{dune['id']}",
+               headers=admin_profile["headers"],
                json={"position_seconds": 600, "duration_seconds": 7200})
     client.delete("/api/v1/library/history", headers=second_session["headers"])
     assert client.get(f"/api/v1/library/history/{dune['id']}",
-                      headers=owner["headers"]).json()["position_seconds"] == 600
+                      headers=admin_profile["headers"]
+                      ).json()["position_seconds"] == 600
+
+
+# ---------------------------------------------------------------------------
+# Every profile-scoped route needs the header the client sends
+# ---------------------------------------------------------------------------
+def test_favorites_needs_a_resolvable_profile(client, owner):
+    """A favourites list with no profile is a list of somebody else's titles.
+
+    The route takes `ProfileDep`, which resolves the profile from the
+    `X-Profile-Id` header or, failing that, from a playback token's claims.  A
+    plain session token carries no profile, so without the header the server
+    has nothing to resolve and the route should say so rather than fall back to
+    the account's first profile.
+
+    The client's own contract test asserts that the header reaches the
+    library roots; this asserts the server's half of the same contract, so a
+    rename of the header on either side fails a test rather than an account's
+    favourites.
+    """
+    response = client.get("/api/v1/library/favorites", headers=owner["headers"])
+    assert response.status_code == 400, response.text
+    body = response.json()
+    # A named code, not the generic one: a client has to be able to tell "you
+    # did not tell me which profile" from "that profile is not yours".
+    assert body["error"] == "profile_required", body
+
+    # ...and with the header, the same request is answered normally.
+    assert client.get("/api/v1/library/favorites",
+                      headers={**owner["headers"],
+                               "X-Profile-Id": "1"}).status_code == 200

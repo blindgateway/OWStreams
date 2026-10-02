@@ -198,6 +198,18 @@ scrypt_maxmem = 16777216
 
 [media]
 library_roots = ["{root}"]
+
+[rate_limit]
+# Raised from the 10/min sign-in ceiling.  Every test signs in, and the suite
+# signs in more than ten times inside a couple of seconds, so the production
+# limit answered 429 and "Too many sign-in attempts" -- which is the server
+# working exactly as designed, and tells a person debugging an end-to-end
+# failure nothing about the client.
+#
+# Nothing here is weakened that these tests depend on: the *lockout* limit
+# above it (30/min) is left alone, and `aWrongPasswordIsRejectedWithoutASession`
+# still signs in deliberately wrongly to prove the failure path.
+login_per_minute = 10000
 """.lstrip(),
         encoding="utf-8",
     )
