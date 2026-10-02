@@ -259,9 +259,21 @@ class Importer:
         if existing and not reimport_all:
             same_size = int(existing["file_size_bytes"] or 0) == record.size
             same_inode = (not existing["file_inode"]) or existing["file_inode"] == record.inode
+            # Compare whole seconds.  The stored value is an ISO timestamp
+            # truncated to a second, so comparing it against a fractional
+            # st_mtime never matches: every scan would re-probe the whole
+            # library, and on a 1000-title HDD that is a scan you cannot
+            # afford to run nightly.
             same_mtime = _stored_mtime(existing["file_modified_at"]) == int(record.modified_at)
-            if same_size and same_inode and same_mtime \
-                    and existing["integrity_state"] == "ok":
+            # "ok" and "corrupt" are both *settled* states, and both mean
+            # "already probed, nothing more to learn from a cheap stat".  Only
+            # "unknown" and "missing" are unsettled: the first has never been
+            # probed, the second means the file was gone and may be back.
+            # Treating "corrupt" as unsettled made every rescan re-probe every
+            # unreadable file, which on a mixed library is a nightly ffprobe
+            # storm over the whole tree.
+            settled = (existing["integrity_state"] or "unknown") in ("ok", "corrupt")
+            if same_size and same_inode and same_mtime and settled:
                 stats.skipped += 1
                 return
 
@@ -306,7 +318,14 @@ class Importer:
             # which file is broken and fix or delete it, instead of it silently
             # vanishing from the library.
             log.warning("%s: %s", path.name, probe_result.error)
-            probe_fields: dict = {"file_size_bytes": probe_result.file_size_bytes}
+            # The size is kept, and the container is taken from the extension.
+            # Dropping the container too would leave the detail screen saying
+            # "unknown" about a file whose format is plainly in its name, and
+            # the player needs the container to pick a demuxer.
+            probe_fields: dict = {
+                "file_size_bytes": probe_result.file_size_bytes,
+                "container": probe_result.container,
+            }
         else:
             probe_fields = probe_result.as_media_fields()
 
@@ -410,13 +429,22 @@ class Importer:
 
         if existing:
             # Preserve operator edits to descriptive fields when the new pass
-            # has nothing better to say.
+            # has nothing better to say.  The *technical* fields are the
+            # exception: they are read off the file every scan, so a value the
+            # current probe could not determine must not overwrite what an
+            # earlier one did.  (Getting this backwards produced "lrc" as the
+            # container of "Dune.Part.Two.mkv".)
             for field_name in ("overview", "year", "runtime_minutes", "rating_value",
-                               "poster_key", "backdrop_key", "parental_rating"):
+                               "poster_key", "backdrop_key", "parental_rating",
+                               "container", "video_codec", "video_profile", "width",
+                               "height", "aspect_ratio", "frame_rate", "bitrate_bps",
+                               "hdr_format", "color_space", "audio_codec",
+                               "audio_channels", "audio_languages",
+                               "subtitle_languages"):
                 if values.get(field_name) in (None, "") and existing.get(field_name) not in (None, ""):
                     values[field_name] = existing[field_name]
-            media_id = repo.update_media(self.db, int(existing["id"]), **values)
             media_id = int(existing["id"])
+            repo.update_media(self.db, media_id, **values)
             created = False
             if stats:
                 stats.updated += 1
@@ -567,15 +595,6 @@ def _ts_to_iso(ts: float) -> str:
     from datetime import UTC, datetime
 
     return datetime.fromtimestamp(ts, tz=UTC).replace(microsecond=0).isoformat()
-
-
-def _credit_to_dict(credit) -> dict:
-    """Flatten a provider ``Credit`` into the mapping the repository wants."""
-    import dataclasses
-
-    if isinstance(credit, dict):
-        return dict(credit)
-    return dataclasses.asdict(credit)
 
 
 def _credit_to_dict(credit) -> dict:

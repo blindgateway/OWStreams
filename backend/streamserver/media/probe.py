@@ -229,10 +229,16 @@ class MediaProbe:
 
         if size == 0:
             return ProbeResult(ok=False, path=file_path, file_size_bytes=0,
-                               error="file is empty")
+                               error="file is empty",
+                               container=file_path.suffix.lstrip(".").lower() or None)
         if not self.available:
+            # No ffprobe: the file is treated as importable with whatever the
+            # name says, and no technical metadata.  The container is still
+            # worth keeping -- it is the one field the extension is reliable
+            # about, and the player needs it to choose a demuxer.
             return ProbeResult(ok=True, path=file_path, file_size_bytes=size,
-                               error=None, container=file_path.suffix.lstrip(".").lower() or None)
+                               error=None,
+                               container=file_path.suffix.lstrip(".").lower() or None)
 
         command = [
             self.ffprobe_path,
