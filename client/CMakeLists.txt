@@ -91,6 +91,7 @@ set(STREAM_QML_FILES
     qml/ui/PosterRail.qml
     qml/ui/StatusPane.qml
     qml/ui/FactList.qml
+    qml/ui/FilterBar.qml
     qml/ui/ChangePasswordScreen.qml
     qml/screens/ServerScreen.qml
     qml/screens/LoginScreen.qml

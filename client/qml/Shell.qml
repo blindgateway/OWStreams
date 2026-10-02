@@ -173,6 +173,8 @@ Item {
                         visible: host.controller.screen === 1
                         model: host.controller.library
                         heading: qsTr("Library")
+                        filterable: true
+                        controller: host.controller
                         onTitleActivated: function (id) { host.controller.openDetail(id) }
                     }
 

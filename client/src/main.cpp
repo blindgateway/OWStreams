@@ -1,5 +1,7 @@
+#include <cstdio>
+
 #include <QGuiApplication>
-#include <QLoggingCategory>
+#include <QLibraryInfo>
 #include <QQmlApplicationEngine>
 #include <QtQml>
 #include <QQmlContext>
@@ -19,6 +21,46 @@
 /// be built by a test without a QGuiApplication.
 int main(int argc, char *argv[])
 {
+    // A handler installed *before* the QGuiApplication exists, because the
+    // constructor is where a missing platform plugin aborts -- and it aborts
+    // through `qFatal`, whose message on this Qt does not always reach a
+    // terminal.  The symptom is an exit code of 134 and nothing at all on
+    // stdout or stderr, which is what makes it expensive to diagnose: the
+    // backtrace ends at `init_platform` and the message Qt has is never
+    // printed.  Four lines here turn a mystery into a sentence.
+    qInstallMessageHandler([](QtMsgType type, const QMessageLogContext &context,
+                              const QString &message) {
+        const char *severity = type == QtDebugMsg ? "debug"
+            : type == QtInfoMsg ? "info"
+            : type == QtWarningMsg ? "warning"
+            : type == QtCriticalMsg ? "critical" : "fatal";
+        std::fprintf(stderr, "stream-client: %s: %s (%s:%d)\n", severity,
+                     qPrintable(message),
+                     context.file ? context.file : "<unknown>",
+                     context.line);
+    });
+
+    // The platform plugin's search path, from the Qt installation this was
+    // built against.
+    //
+    // Set here rather than left to Qt because Qt cannot find it itself on this
+    // machine: the plugins are in `/usr/lib64/qt6/plugins`, Qt reports that
+    // path in answer to `qmake -query`, and it still says
+    //
+    //     Could not find the Qt platform plugin "offscreen" in ""
+    //
+    // from inside `QGuiApplication`'s constructor -- an exit code of 134 and,
+    // before the handler above, nothing on either stream.
+    //
+    // Absolute, and therefore only right for a build tree.  In an install tree
+    // the path is relative to the binary and belongs in the `qt.conf` beside
+    // it, which `package.sh` writes; setting it here would override that and
+    // point a packaged client at the *packaging machine's* Qt.  So the
+    // environment variable the caller may already have set wins.
+    if (qEnvironmentVariableIsEmpty("QT_QPA_PLATFORM_PLUGIN_PATH"))
+        qputenv("QT_QPA_PLATFORM_PLUGIN_PATH",
+                QLibraryInfo::path(QLibraryInfo::PluginsPath).toUtf8());
+
     QGuiApplication app(argc, argv);
     app.setOrganizationName(QStringLiteral("Stream"));
     app.setApplicationName(QStringLiteral("Stream"));

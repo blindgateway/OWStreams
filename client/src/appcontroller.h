@@ -64,11 +64,11 @@ class AppController : public QObject
     /// it is open cannot leave it pointing at the previous one.
     Q_PROPERTY(int playerMediaId READ playerMediaId NOTIFY screenChanged)
     Q_PROPERTY(PlaybackController *player READ player CONSTANT)
-    /// What the player is showing, or 0 when it is closed.  The player screen
-    /// reads this rather than being handed an id, so a change of title while
-    /// it is open cannot leave it pointing at the previous one.
-    Q_PROPERTY(int playerMediaId READ playerMediaId NOTIFY screenChanged)
-    Q_PROPERTY(PlaybackController *player READ player CONSTANT)
+    /// The genres, years and other values the server offers as filters, from
+    /// `GET /library/categories`.  The library's filter row is built from this
+    /// rather than from a hard-coded list, so a title with a genre nobody
+    /// thought to put in the UI can still be found by it.
+    Q_PROPERTY(QVariantMap filterOptions READ filterOptions NOTIFY filterOptionsChanged)
 
 public:
     enum Screen {
@@ -105,6 +105,7 @@ public:
     QString libraryGenre() const { return m_libraryGenre; }
     QString libraryYear() const { return m_libraryYear; }
     int libraryPageSize() const { return kPageSize; }
+    QVariantMap filterOptions() const { return m_filterOptions; }
     int playerMediaId() const { return m_playerMediaId; }
     /// One player for the life of the app.  Constructed per title would mean a
     /// new `QMediaPlayer` per poster and a new audio device fight per open, and

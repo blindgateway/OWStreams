@@ -19,6 +19,15 @@ Flickable {
 
     signal titleActivated(int mediaId)
 
+    /// The library's filter row.  Only the library has one -- favourites and
+    /// history are already narrow, and a filter over "the nine titles you
+    /// marked as favourites" is noise.
+    property bool filterable: false
+    /// `AppController`, bound only when `filterable`.  A screen that shows a
+    /// grid does not have to know about the controller; this one does, and
+    /// only the library instance of it.
+    property var controller: null
+
     readonly property int cardWidth: 150
     readonly property int columns: Responsive.columnsFor(
         width - Responsive.pageMargin * 2, cardWidth, 2, 8)
@@ -62,6 +71,24 @@ Flickable {
             }
         }
 
+        FilterBar {
+            Layout.fillWidth: true
+            Layout.leftMargin: Responsive.pageMargin
+            Layout.rightMargin: Responsive.pageMargin
+            visible: screen.filterable
+            // Read *through* the controller rather than being handed copies of
+            // each filter: a copy has to be updated when the controller changes
+            // it, and then the two can disagree about what is selected.
+            options: screen.controller ? screen.controller.filterOptions : null
+            sort: screen.controller ? screen.controller.librarySort : "added"
+            genre: screen.controller ? screen.controller.libraryGenre : ""
+            year: screen.controller ? screen.controller.libraryYear : ""
+            onSortRequested: function (sort) { screen.controller.librarySort = sort }
+            onGenreRequested: function (slug) { screen.controller.libraryGenre = slug }
+            onYearRequested: function (year) { screen.controller.libraryYear = year }
+            onCleared: screen.controller.clearLibraryFilters()
+        }
+
         StatusPane {
             Layout.fillWidth: true
             Layout.leftMargin: Responsive.pageMargin
@@ -78,8 +105,17 @@ Flickable {
             Layout.fillWidth: true
             Layout.leftMargin: Responsive.pageMargin
             Layout.rightMargin: Responsive.pageMargin
-            Layout.preferredHeight: Math.min(contentHeight,
-                                             Math.max(0, (screen.height - 200)))
+            // The *whole page* scrolls -- this is the outer `Flickable`.  An
+            // earlier version gave the grid its own height and its own
+            // `ScrollBar`, which put a scroll view inside a scroll view: the
+            // inner one swallowed the wheel, so the outer one could not be
+            // scrolled past it and rows below the fold were unreachable.
+            //
+            // It measured `screen.height - 200`, a literal standing in for the
+            // heading, the filter bar and the status pane.  On a phone that is
+            // most of the screen, so a 1000-title library showed the first three
+            // rows and no way to reach row four.
+            Layout.preferredHeight: Math.max(0, contentHeight)
             model: screen.model
             clip: true
             boundsBehavior: Flickable.StopAtBounds

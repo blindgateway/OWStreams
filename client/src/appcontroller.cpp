@@ -2,8 +2,6 @@
 
 #include <QUrlQuery>
 
-#include <QUrlQuery>
-
 #include "apiclient.h"
 #include "homescreenmodel.h"
 #include "librarymodel.h"
@@ -89,34 +87,6 @@ AppController::AppController(ApiClient *api, QObject *parent)
         }
         m_pendingPlayerMediaId = 0;
         setScreen(Detail);
-    });
-    connect(m_api, &ApiClient::categoriesLoaded, this,
-            [this](const QJsonObject &payload) {
-        m_filterOptions = payload.toVariantMap();
-        emit filterOptionsChanged();
-    });
-    connect(m_api, &ApiClient::historyCleared, this, [this] {
-        m_history->clear();
-        m_favorites->clear();
-        refresh();
-    });
-    connect(m_api, &ApiClient::historyEntryRemoved, this, [this](int mediaId) {
-        m_history->remove(mediaId);
-        m_favorites->remove(mediaId);
-    });
-    connect(m_api, &ApiClient::categoriesLoaded, this,
-            [this](const QJsonObject &payload) {
-        m_filterOptions = payload.toVariantMap();
-        emit filterOptionsChanged();
-    });
-    connect(m_api, &ApiClient::historyCleared, this, [this] {
-        m_history->clear();
-        m_favorites->clear();
-        refresh();
-    });
-    connect(m_api, &ApiClient::historyEntryRemoved, this, [this](int mediaId) {
-        m_history->remove(mediaId);
-        m_favorites->remove(mediaId);
     });
     connect(m_api, &ApiClient::favoriteChanged, this,
             [this](int mediaId, bool favorite) {
