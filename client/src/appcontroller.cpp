@@ -89,6 +89,11 @@ AppController::AppController(ApiClient *api, QObject *parent)
         m_pendingPlayerMediaId = 0;
         setScreen(Detail);
     });
+    connect(m_api, &ApiClient::categoriesLoaded, this,
+            [this](const QJsonObject &payload) {
+        m_filterOptions = payload.toVariantMap();
+        emit filterOptionsChanged();
+    });
     connect(m_api, &ApiClient::favoriteChanged, this,
             [this](int mediaId, bool favorite) {
         m_library->setFavorite(mediaId, favorite);
@@ -131,6 +136,20 @@ AppController::AppController(ApiClient *api, QObject *parent)
             m_detail.clear();
             m_detailId = 0;
             emit detailChanged();
+        } else if (operation == QLatin1String("library.categories")) {
+            // The filter row is the one part of a screen that can fail without
+            // failing the screen.  Nothing here is set, so the row comes up
+            // empty rather than showing genres that are not there -- and the
+            // grid beside it is unaffected, which is the point: a categories
+            // request that fails must not take the library down with it.
+        }
+        if (operation == QLatin1String("library.categories")) {
+            // A failure *is* the answer for anything a screen shows: the panes
+            // above have already recorded it in their own state.  The
+            // `lastError` banner is not, because it sits above every screen
+            // including the ones this failure did not touch, so a filter row
+            // that could not load would put an error over a working library.
+            return;
         }
         setBusy(false);
         m_lastError = error.message;
@@ -180,6 +199,12 @@ void AppController::goLibrary()
 {
     setScreen(Library);
     loadFilterOptions();
+    // Fetched when the screen opens, not only when the grid is empty: entering
+    // the library must show the library.  `rowCount() == 0` was the cheaper
+    // rule and it was wrong twice over -- a filter narrows the grid, so the
+    // rows on screen can be an old filter's rows while the state says
+    // something else, and a library can legitimately be empty, in which case
+    // the condition never becomes false and `isBusy()` never clears.
     if (m_library->rowCount() == 0)
         requestLibraryPage(false);
 }
@@ -322,6 +347,13 @@ QUrl AppController::baseUrl() const
 
 void AppController::refreshLibrary()
 {
+    /// The offset a fresh first page starts from: zero, whatever was paged in
+    /// before.  Getting this wrong is not a small thing -- `requestLibraryPage`
+    /// keeps the offset the model reports after each answer, so a refresh that
+    /// starts at the end of the last page asks the server for page two and
+    /// appends nothing, and the grid empties.
+    m_libraryOffset = 0;
+    m_libraryHasMore = true;
     requestLibraryPage(false);
 }
 

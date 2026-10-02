@@ -51,6 +51,14 @@ SessionController::SessionController(QObject *parent)
             });
 
     connect(m_api, &ApiClient::profileSelected, this, [this](int profileId) {
+        // The client announces the selection; *this* is what makes it the
+        // selected one.  Without the `setProfileId` below, `profileSelected` was
+        // the only signal carrying the id and nothing consumed it: the header
+        // went out as "0", the server refused every profile-scoped read with
+        // `profile_not_found`, and the app landed on Home with a library that
+        // could not load.  Everything after this call -- favourites, history,
+        // ratings, the audit trail's profile column -- depends on this line.
+        m_api->setProfileId(profileId);
         m_credentials->saveLastProfile(m_api->username(), profileId);
         setState(Home);
         emit profilesChanged();
@@ -91,7 +99,20 @@ SessionController::SessionController(QObject *parent)
                     emit stateChanged();
                     return;
                 }
-                m_lastError = error.message;
+                // A failure the user caused -- a wrong password, a wrong PIN -- clears
+                // anything already on screen before putting its own message
+                // there.  A stale "that PIN was wrong" sitting under a freshly
+                // typed one is a message about an attempt nobody is making, and
+                // the profile picker shows `lastError` for as long as it is
+                // open.  `clear()` is unconditional: a success clears the
+                // message too, and so does the next attempt at anything.
+                m_lastError.clear();
+                if (operation.startsWith(QLatin1String("profiles."))
+                    || operation.startsWith(QLatin1String("auth."))) {
+                    // These are the server's own words and they are the useful
+                    // ones: "That PIN is not right" beats "request failed".
+                    m_lastError = error.message;
+                }
                 emit stateChanged();
             });
 

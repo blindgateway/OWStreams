@@ -212,6 +212,12 @@ QNetworkReply *ApiClient::send(const Pending &request, const QString &bearerToke
     if (!bearerToken.isEmpty())
         netRequest.setRawHeader("Authorization", "Bearer " + bearerToken.toUtf8());
 
+    // Announced here rather than in each caller, so it cannot miss one.  The
+    // token is not in it -- a log or a test spy must never be the place a
+    // credential ends up -- and neither is the body: a library page's query is
+    // what a test needs, and a password field's is what it must not see.
+    emit requestSent(netRequest.url().toString(QUrl::RemoveAuthority | QUrl::RemoveUserInfo));
+
     QNetworkReply *reply =
         (request.verb == "GET") ? m_manager->get(netRequest)
                                 : m_manager->sendCustomRequest(netRequest, request.verb,
@@ -227,6 +233,11 @@ QNetworkReply *ApiClient::send(const Pending &request, const QString &bearerToke
 
 void ApiClient::handle(QNetworkReply *reply, const Pending &pending)
 {
+    // Read once, here.  It used to be read in `errorFrom` and again below, so
+    // the second read got an *empty* body -- which made every failure parse as
+    // a parse failure, and the parse failure overwrote a status that had been
+    // read correctly a moment earlier.  The whole taxonomy was therefore
+    // reported as `Unknown` with status 0, for every error, everywhere.
     const QByteArray body = reply->readAll();
     const int status = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
 
@@ -234,6 +245,28 @@ void ApiClient::handle(QNetworkReply *reply, const Pending &pending)
         && pending.auth == Auth::Session) {
         m_replayQueue.append(pending);
         attemptRefresh();
+        return;
+    }
+    // A 401 with nothing to refresh with is a *failure*, and saying so is the
+    // only way a caller learns it.  The old guard fell through to the ordinary
+    // path, which parsed an empty body, produced an empty message, and left the
+    // kind at `Unknown` -- so a request refused for want of a credential raised
+    // no signal that a screen could act on at all.  The refresh token is absent
+    // on exactly one path -- a remembered session whose pair was never loaded --
+    // and that path is the one this catches.
+    if (status == 401 && pending.auth == Auth::Session) {
+        QJsonParseError earlyParse{};
+        const QJsonDocument early = QJsonDocument::fromJson(body, &earlyParse);
+        const QJsonObject detail = early.isObject() ? early.object() : QJsonObject{};
+        ApiError error = transportErrorFrom(reply);
+        error.kind = kindForStatus(status);
+        error.statusCode = status;
+        error.code = detail.value(QStringLiteral("error")).toString();
+        error.message = detail.value(QStringLiteral("message")).toString();
+        error.requestId = detail.value(QStringLiteral("request_id")).toString();
+        if (error.message.isEmpty())
+            error.message = QStringLiteral("This request needs a sign-in.");
+        emit failed(pending.operation, error);
         return;
     }
 
@@ -413,7 +446,23 @@ void ApiClient::handle(QNetworkReply *reply, const Pending &pending)
         return;
     }
 
-    ApiError error = errorFrom(reply);
+    ApiError error = transportErrorFrom(reply);
+
+    if (parseError.error != QJsonParseError::NoError) {
+        // A body the client could not read is not a status the client
+        // understands -- and `transportErrorFrom` has already said what went
+        // wrong at the transport level, which is the only thing that can be
+        // believed.  `kindForStatus(status)` is not applied here: it is right
+        // about the *server* and the message is about the *client*, and pairing
+        // the two produces `403` next to "the server sent a response this app
+        // could not read".
+        error.statusCode = 0;
+        error.code.clear();
+        return finishFailure(pending, error);
+    }
+
+    // The server answered, and its answer parsed.  Now the status is the whole
+    // story, and it replaces whatever the transport said.
     error.kind = kindForStatus(status);
     error.statusCode = status;
     if (object.contains(QStringLiteral("error"))) {
@@ -423,24 +472,29 @@ void ApiClient::handle(QNetworkReply *reply, const Pending &pending)
         if (status == 429)
             error.retryAfterSeconds =
                 reply->rawHeader(QByteArrayLiteral("Retry-After")).toInt();
-    } else if (parseError.error != QJsonParseError::NoError) {
-        error.message =
-            QStringLiteral("The server sent a response this app could not read.");
     }
+    return finishFailure(pending, error);
+}
+
+/// Every failure leaves through here, so the last touch is in one place.
+void ApiClient::finishFailure(const Pending &pending, ApiError error)
+{
+    // An empty message is the one failure a screen cannot show, so it is filled
+    // in rather than passed on: a `StatusPane` with no text is a blank panel
+    // that looks like the app has stopped.
     if (error.message.isEmpty())
-        error.message = QStringLiteral("Request failed (%1).").arg(status);
+        error.message = QStringLiteral("Request failed (%1).").arg(error.statusCode);
     emit failed(pending.operation, error);
 }
 
-ApiError ApiClient::errorFrom(QNetworkReply *reply) const
+ApiError ApiClient::transportErrorFrom(QNetworkReply *reply) const
 {
+    // Named for what it does: it reads the *transport*, never the body.  The
+    // old `errorFrom` called `readAll()`, which emptied the buffer the caller
+    // had already read -- so the caller's parse failed on an empty string, and
+    // the parse failure overwrote a status that had been read correctly a
+    // moment earlier.  Every error therefore arrived as `Unknown` with status 0.
     ApiError error;
-    error.statusCode =
-        reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
-
-    if (error.statusCode != 0)
-        return error;   // the server answered; handle() has the body
-
     switch (reply->error()) {
     case QNetworkReply::OperationCanceledError:
         error.kind = ApiErrorKind::Timeout;
@@ -915,6 +969,13 @@ void ApiClient::unlockProfile(int profileId, const QString &pin)
     request.verb = "POST";
     request.path = kApiRoot + QStringLiteral("/profiles/") +
                    QString::number(profileId) + QStringLiteral("/unlock");
+    // Always sent, including as an empty string.  `ProfilePinVerify.pin` is
+    // `str` with a `^\d{4,8}$` pattern and no default, so omitting the key is a
+    // 422 before the handler runs -- and a 422 on a *wrong* PIN is a refusal
+    // that reads as "that is not a PIN" rather than "that is not the PIN", which
+    // is a message about the format of somebody's key instead of about the
+    // guess.  The empty string still fails the pattern, and it fails it in the
+    // right place: `verify_pin` has already returned for a profile with no PIN.
     request.body = {{QStringLiteral("pin"), pin}};
     request.auth = Auth::Session;
     request.mediaId = profileId;

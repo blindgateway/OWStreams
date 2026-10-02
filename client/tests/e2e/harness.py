@@ -83,15 +83,41 @@ def free_port() -> int:
 
 
 def make_media(root: Path) -> Path:
-    """Write a real, decodable clip into the library root.
+    """Write a real, decodable clip into the library root, with its sidecar.
 
     ``lavfi`` needs no input files, so this works on a build machine with no
     media and no network.  The result is a real Matroska container with an
     H.264 video track and an AAC audio track -- the two things the backend
     probes for and the two things a decoder has to open.
+
+    The NFO sidecar beside it carries a genre, because a library with no genres
+    has nothing for the filter row to offer: ``GET /library/categories`` returns
+    ``{"genres": []}``, the client's filter row comes up with no buttons, and
+    every test that exercises filtering passes vacuously because the one thing
+    that would have failed is the one thing the fixture never provided.
     """
     root.mkdir(parents=True, exist_ok=True)
     path = root / "Test.Feature.2021.1080p.WEB-DL.mkv"
+    sidecar = path.with_suffix(".nfo")
+    if path.exists() and path.stat().st_size > 0 and sidecar.exists():
+        return path
+
+    # Kodi's own XML shape, which is the sidecar format the backend reads by
+    # default.  Two genres so that the "narrow the list" assertion has something
+    # to narrow, and a distinct name from the filename's own so a parser bug
+    # cannot pass by coincidence.
+    sidecar.write_text(
+        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n'
+        "<movie>\n"
+        "  <title>Test Feature</title>\n"
+        "  <year>2021</year>\n"
+        "  <genre>Science Fiction</genre>\n"
+        "  <genre>Drama</genre>\n"
+        "  <plot>A one-second clip that exists so the client can be tested "
+        "against a real server.</plot>\n"
+        "</movie>\n",
+        encoding="utf-8",
+    )
     if path.exists() and path.stat().st_size > 0:
         return path
 
@@ -210,6 +236,17 @@ library_roots = ["{root}"]
 # above it (30/min) is left alone, and `aWrongPasswordIsRejectedWithoutASession`
 # still signs in deliberately wrongly to prove the failure path.
 login_per_minute = 10000
+# Same argument for the PIN bucket, which is six a minute and is spent by an
+# unlock *whether or not* the profile has one -- `verify_pin` takes a token
+# before it looks at the hash, so a caller cannot use the limit to discover
+# which profiles have a PIN.  Six is right for production and it is less than
+# the number of unlocks the suite makes against one profile.
+#
+# The *server's* refusal of a drained bucket is asserted in the backend's
+# `test_pin_attempts_are_throttled`, against the production number.  Raising it
+# here does not weaken that test; it only stops this one from measuring the
+# limiter instead of the client.
+pin_attempts_per_minute = 10000
 """.lstrip(),
         encoding="utf-8",
     )

@@ -201,6 +201,17 @@ signals:
     void categoriesChanged();
     void sessionsChanged();
 
+    /// Every request this client sends, as `VERB path?query` -- the token
+    /// deliberately excluded.
+    ///
+    /// Exists because the end-to-end suite has to assert on the *wire*, not on
+    /// the model: a filter that looks right in the UI and sends nothing is the
+    /// failure that survives every unit test, because every unit test asserts
+    /// on the model it also drives.  Recording the request here rather than in
+    /// the test means the assertion is about what went out, not about what the
+    /// test believes it asked for.
+    void requestSent(const QString &description);
+
     void serverChecked(bool reachable, const QString &version,
                        const QString &message, bool requiresSetup);
     void authenticated();
@@ -281,7 +292,13 @@ private:
     QNetworkReply *send(const Pending &request);
     QNetworkReply *send(const Pending &request, const QString &bearerToken);
     void handle(QNetworkReply *reply, const Pending &pending);
-    ApiError errorFrom(QNetworkReply *reply) const;
+    /// Every failure leaves through here, so the last touch -- an empty
+    /// message becoming a real one -- is in one place rather than at each of
+    /// the three exits from `handle()`.
+    void finishFailure(const Pending &pending, ApiError error);
+    /// The *transport's* error, and nothing else -- in particular it does
+    /// not read the body.  `handle()` reads it once and owns the parse.
+    ApiError transportErrorFrom(QNetworkReply *reply) const;
     /// Hand the current token to the access manager, or take it away.  Called
     /// whenever the token or the base URL changes, so the manager cannot hold
     /// a stale credential after a switch to another server.
