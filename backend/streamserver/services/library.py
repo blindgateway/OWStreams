@@ -90,23 +90,32 @@ class LibraryService:
 
     # -- facets -----------------------------------------------------------
     def categories(self) -> dict[str, Any]:
+        return self.facets()
+
+    def stats(self) -> dict[str, Any]:
+        return repo.library_stats(self.db)
+
+    def facets(self) -> dict[str, Any]:
+        """Genres, years, tags and totals for the categories screen.
+
+        Every list here is materialised into plain dicts: the underlying
+        queries return ``sqlite3.Row`` objects, which FastAPI cannot serialise.
+        """
+        db = self.db
         return {
-            "genres": repo.list_genres_with_counts(self.db),
-            "years": repo.list_years_with_counts(self.db),
-            "decades": repo.list_decades_with_counts(self.db),
-            "tags": repo.list_tags_with_counts(self.db, limit=60),
-            "collections": repo.list_collections(self.db),
+            "genres": [dict(row) for row in repo.list_genres_with_counts(db)],
+            "years": [dict(row) for row in repo.list_years_with_counts(db)],
+            "decades": [dict(row) for row in repo.list_decades_with_counts(db)],
+            "tags": [dict(row) for row in repo.list_tags_with_counts(db, limit=60)],
+            "collections": [dict(row) for row in repo.list_collections(db)],
             "content_types": [
-                row for row in self.db.query(
+                dict(row) for row in db.query(
                     "SELECT content_type, COUNT(*) AS count FROM media "
                     "WHERE hidden = 0 GROUP BY content_type"
                 )
             ],
-            "stats": repo.library_stats(self.db),
+            "stats": repo.library_stats(db),
         }
-
-    def stats(self) -> dict[str, Any]:
-        return repo.library_stats(self.db)
 
     def collection(self, collection_id: int) -> dict[str, Any]:
         row = self.db.query_one("SELECT * FROM collections WHERE id = ?", (collection_id,))
@@ -116,7 +125,7 @@ class LibraryService:
         return {**dict(row), "items": repo.attach_relations(self.db, items)}
 
     def people(self, *, search: str | None = None, limit: int = 100) -> list[dict[str, Any]]:
-        return repo.list_people(self.db, search=search, limit=limit)
+        return [dict(row) for row in repo.list_people(self.db, search=search, limit=limit)]
 
     def person(self, person_id: int) -> dict[str, Any]:
         row = self.db.query_one("SELECT * FROM people WHERE id = ?", (person_id,))

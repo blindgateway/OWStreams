@@ -1446,8 +1446,10 @@ def library_stats(db: Database) -> dict[str, Any]:
         """
     )
     stats = dict(row) if row else {}
-    stats["total_bytes"] = int(stats.get("total_bytes") or 0)
-    stats["total_runtime"] = int(stats.get("total_runtime") or 0)
+    # COALESCE(SUM(...)) can still come back as None for an empty table.
+    for key in ("total", "movies", "series", "episodes", "missing", "hidden",
+                "total_bytes", "total_runtime"):
+        stats[key] = int(stats.get(key) or 0)
     return stats
 
 

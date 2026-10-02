@@ -31,15 +31,18 @@ def data_dir(tmp_path: Path) -> Path:
     return path
 
 
+#: The on-disk media directory.  The fixture that *imports* titles into it is
+#: ``imported``; keeping the two distinctly named avoids a shadowed fixture
+#: turning the app fixture recursive.
 @pytest.fixture
-def library(tmp_path: Path) -> Path:
+def library_root(tmp_path: Path) -> Path:
     path = tmp_path / "movies"
     path.mkdir()
     return path
 
 
 @pytest.fixture
-def config(data_dir: Path, library: Path) -> Config:
+def config(data_dir: Path, library_root: Path) -> Config:
     """A configuration with cheap KDF parameters.
 
     scrypt at production cost is ~100 ms, which would dominate the runtime of a
@@ -50,7 +53,7 @@ def config(data_dir: Path, library: Path) -> Config:
         overrides={
             "storage.data_dir": str(data_dir),
             "storage.log_to_file": False,
-            "media.library_roots": [str(library)],
+            "media.library_roots": [str(library_root)],
             "auth.scrypt_n": 1024,          # 2**10: still a real KDF, ~1 ms
             "auth.scrypt_maxmem": 16 * 1024 * 1024,
             "server.host": "127.0.0.1",
@@ -77,14 +80,14 @@ def secret(config: Config) -> bytes:
 
 
 @pytest.fixture
-def make_media_file(library: Path):
+def make_media_file(library_root: Path):
     """Create a file with plausible media bytes and return its path."""
     counter = {"n": 0}
 
     def _make(name: str = "", size: int = 4096) -> Path:
         counter["n"] += 1
         filename = name or f"Movie.{1990 + counter['n']}.1080p.mkv"
-        path = library / filename
+        path = library_root / filename
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_bytes(bytes(counter["n"] % 251 for _ in range(size)))
         return path
@@ -238,30 +241,42 @@ def second_session(client, second_user):
 
 
 @pytest.fixture
-def imported(app, make_media_file, client, admin_profile) -> list[dict]:
-    """Three imported titles with genres, so list/search routes have data."""
+def library(app, library_root: Path) -> list[dict]:
+    """Three imported titles with genres, so list/search routes have data.
+
+    Depends only on ``app``: the files are written and imported through the
+    service layer, so no account or profile needs to exist for a library test.
+    """
     from streamserver.db import repositories as repo
 
-    paths = [
-        make_media_file("Dune.2021.1080p.WEBRip.DDP5.1.x264-NTb.mkv", 8192),
-        make_media_file("Blade.Runner.2049.2017.2160p.WEB-DL.mkv", 8192),
-        make_media_file("Arrival.2016.720p.mkv", 4096),
-    ]
-    titles = ["Dune", "Blade Runner", "Arrival"]
-    genres = [
-        [("Science Fiction", "science-fiction"), ("Adventure", "adventure")],
-        [("Science Fiction", "science-fiction")],
-        [("Science Fiction", "science-fiction"), ("Drama", "drama")],
+    # Written here rather than through make_media_file so the fixture's own
+    # inputs and the filenames it looks up afterwards cannot drift apart.
+    for filename, size in (
+        ("Dune.2021.1080p.WEBRip.DDP5.1.x264-NTb.mkv", 8192),
+        ("Blade.Runner.2049.2017.2160p.WEB-DL.mkv", 8192),
+        ("Arrival.2016.720p.mkv", 4096),
+    ):
+        (library_root / filename).write_bytes(bytes(range(256)) * (size // 256))
+
+    # (filename, display title, year, genres)
+    catalogue = [
+        ("Dune.2021.1080p.WEBRip.DDP5.1.x264-NTb.mkv", "Dune", 2021,
+         [("Science Fiction", "science-fiction"), ("Adventure", "adventure")]),
+        ("Blade.Runner.2049.2017.2160p.WEB-DL.mkv", "Blade Runner", 2017,
+         [("Science Fiction", "science-fiction")]),
+        ("Arrival.2016.720p.mkv", "Arrival", 2016,
+         [("Science Fiction", "science-fiction"), ("Drama", "drama")]),
     ]
     stats = app.state.context.importer.scan()
     assert stats.failed == 0, stats.errors
 
     items = []
-    for path, title, genre_list in zip(paths, titles, genres):
+    for filename, title, year, genre_list in catalogue:
+        path = library_root / filename
         row = repo.get_media_by_path(app.state.context.db, str(path.resolve()))
         assert row is not None, f"{path} was not imported"
         app.state.context.importer.update_metadata(
-            int(row["id"]), {"title": title, "year": int(path.name.split(".")[1]),
+            int(row["id"]), {"title": title, "year": year,
                              "overview": f"{title} overview.", "runtime_minutes": 120}
         )
         repo.set_media_genres(app.state.context.db, int(row["id"]), genre_list)
