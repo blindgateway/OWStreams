@@ -244,6 +244,13 @@ class Importer:
             raise PathNotImportable(f"file does not exist: {resolved}")
         if not resolved.is_file():
             raise PathNotImportable(f"not a regular file: {resolved}")
+        try:
+            if resolved.stat().st_size == 0:
+                # A zero-byte file cannot be played and would only clutter the
+                # library with a row that always fails to stream.
+                raise PathNotImportable(f"file is empty: {resolved.name}")
+        except OSError as exc:
+            raise PathNotImportable(f"cannot read file: {exc}") from exc
         return resolved
 
     def _import_scanned(self, record: ScannedFile, stats: ImportStats, *,

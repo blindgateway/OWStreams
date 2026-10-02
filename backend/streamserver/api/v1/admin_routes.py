@@ -20,7 +20,7 @@ from fastapi import APIRouter, Body, HTTPException, Query, Request
 from ...db import repositories as repo
 from ...security import passwords
 from ...security.audit import SecurityEventTypes
-from ...security.paths import PathViolation
+from ...security.paths import MediaRootRegistry, PathViolation
 from ..deps import AdminDep, Ctx, client_ip
 from ..schemas import (
     AdminUserCreate,
@@ -32,6 +32,7 @@ from ..schemas import (
     MediaOut,
     MediaPatch,
     OkResponse,
+    PasswordResetRequest,
 )
 
 router = APIRouter(prefix="/admin", tags=["administration"])
@@ -40,9 +41,22 @@ router = APIRouter(prefix="/admin", tags=["administration"])
 # ---------------------------------------------------------------------------
 # Accounts
 # ---------------------------------------------------------------------------
+#: The columns an account listing may return.  ``password_hash`` is in the
+#: table and deliberately *not* here: an endpoint that echoes a row it did not
+#: shape is one refactor away from publishing the hash.
+USER_LIST_COLUMNS = (
+    "id", "username", "display_name", "email", "is_admin", "is_active",
+    "must_change_password", "created_at", "updated_at", "last_login_at",
+)
+
+
 @router.get("/users", response_model=list[AdminUserOut], summary="List accounts")
 async def list_users(context: Ctx, admin: AdminDep) -> list[AdminUserOut]:
-    return [AdminUserOut(**row) for row in repo.list_users(context.db, include_inactive=True)]
+    rows = repo.list_users(context.db, include_inactive=True)
+    return [
+        AdminUserOut(**{key: row.get(key) for key in USER_LIST_COLUMNS})
+        for row in rows
+    ]
 
 
 @router.post("/users", response_model=AdminUserOut, status_code=201,
@@ -127,6 +141,15 @@ async def update_user(user_id: int, context: Ctx, admin: AdminDep,
     return AdminUserOut(**updated)
 
 
+@router.post("/users/{user_id}/password", response_model=OkResponse,
+             summary="Reset an account's password")
+async def admin_reset_password(user_id: int, caller: AdminDep, context: Ctx,
+                               payload: PasswordResetRequest) -> OkResponse:
+    """The admin-namespace spelling of ``POST /auth/password/reset``."""
+    context.auth.reset_password(user_id, payload.new_password, actor_id=caller.user_id)
+    return OkResponse(detail="Password reset. The account must change it at next sign-in.")
+
+
 # ---------------------------------------------------------------------------
 # Library management
 # ---------------------------------------------------------------------------
@@ -206,8 +229,6 @@ async def add_library_root(payload: LibraryRootIn, context: Ctx, admin: AdminDep
     path is resolved and confirmed to be a readable directory before it is
     accepted -- a typo should fail here, not at the next scan.
     """
-    from ...security.paths import MediaRootRegistry
-
     candidate = Path(payload.path).expanduser()
     try:
         resolved = candidate.resolve(strict=True)
@@ -217,14 +238,20 @@ async def add_library_root(payload: LibraryRootIn, context: Ctx, admin: AdminDep
     if not resolved.is_dir():
         raise HTTPException(status_code=400, detail="Path is not a directory.")
 
+    # One source of truth: rebuild the registry from the config, then re-point
+    # the services at the same registry object.  The earlier version wrote to
+    # ``context.library.config.media.library_roots``, which does not exist --
+    # ``LibraryService`` is handed ``config.media`` by value -- so the new root
+    # was silently ignored by every scan.
     current = list(context.config.media.library_roots)
     if str(resolved) in current:
         return OkResponse(detail="Already configured.")
     current.append(str(resolved))
     context.config.media.library_roots = current
-    context.registry.__init__(tuple(Path(p) for p in current))  # rebuild
-    context.importer.registry = context.registry
-    context.library.config.media.library_roots = current
+
+    registry = MediaRootRegistry(tuple(Path(p) for p in current))
+    context.registry = registry
+    context.importer.registry = registry
 
     context.audit.record(
         SecurityEventTypes.ADMIN_ACTION, outcome="ok", user_id=admin.user_id,

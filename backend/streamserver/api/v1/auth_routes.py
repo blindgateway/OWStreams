@@ -16,7 +16,9 @@ Endpoints
 
 from __future__ import annotations
 
-from fastapi import APIRouter, HTTPException, Request, status
+from typing import Annotated
+
+from fastapi import APIRouter, HTTPException, Query, Request, status
 
 from ...db import repositories as repo
 from ...services.auth import validate_password_strength
@@ -219,8 +221,18 @@ async def server_info(request: Request, context: Ctx) -> ServerInfo:
 
 @router.post("/password/reset", response_model=OkResponse,
              summary="Administrative password reset")
-async def admin_reset_password(user_id: int, caller: AdminDep, context: Ctx,
-                               payload: PasswordResetRequest) -> OkResponse:
+async def admin_reset_password(
+    caller: AdminDep,
+    context: Ctx,
+    payload: PasswordResetRequest,
+    user_id: Annotated[int, Query(ge=1)],
+) -> OkResponse:
+    """Reset another account's password.
+
+    Also reachable as ``POST /api/v1/admin/users/{user_id}/password``; both
+    spellings exist so the operation reads naturally from either the auth or
+    the admin namespace.
+    """
     context.auth.reset_password(user_id, payload.new_password, actor_id=caller.user_id)
     return OkResponse(detail="Password reset. The account must change it at next sign-in.")
 

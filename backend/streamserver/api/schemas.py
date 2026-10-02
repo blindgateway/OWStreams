@@ -396,12 +396,28 @@ class MediaPatch(StrictModel):
     @field_validator("release_date")
     @classmethod
     def _date_shape(cls, value: str | None) -> str | None:
-        import re
+        """Accept ``YYYY`` or ``YYYY-MM-DD``, and only if the date exists.
+
+        A regex alone lets "2020-13-45" through, which would then be written to
+        the library and shown to a viewer as a release date.
+        """
+        import datetime as _dt
 
         if value is None:
             return None
-        if not re.match(r"^\d{4}(-\d{2}-\d{2})?$", value):
+        parts = value.split("-")
+        if len(parts) == 1:
+            if len(parts[0]) != 4 or not parts[0].isdigit():
+                raise ValueError("release_date must be YYYY or YYYY-MM-DD")
+            if not 1888 <= int(parts[0]) <= 2200:
+                raise ValueError("year is out of range")
+            return value
+        if len(parts) != 3 or not all(p.isdigit() for p in parts):
             raise ValueError("release_date must be YYYY or YYYY-MM-DD")
+        try:
+            _dt.date(int(parts[0]), int(parts[1]), int(parts[2]))
+        except ValueError as exc:
+            raise ValueError(f"release_date is not a real date: {exc}") from exc
         return value
 
 
