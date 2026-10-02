@@ -132,8 +132,16 @@ In order, with what each one needs.
    per-platform table. What remains is a verification pass: the Windows and
    Android paths have never been *run*, only compiled for, because this machine
    is neither.
-3. **The full acceptance walkthrough**, every failure case in the brief run
-   against a packaged build rather than from the source tree.
+3. **The full acceptance walkthrough.** Partly done, and the part that is done
+   found fourteen defects: the end-to-end suite now covers the filter row, a
+   server that goes away mid-session, a profile behind a PIN, and the whole
+   `X-Profile-Id` chain, against the real server. What remains is the *manual*
+   pass — every failure case in the brief, driven through the UI by a person,
+   with the application's own log read afterwards. It is blocked on packaging
+   (item 1), because "run the packaged build" is the point of it, and the QML
+   layer is not covered by any test: nothing renders an `Item` and asserts on
+   it. Running the application and reading what Qt logged is what found six
+   more defects, and it is not a substitute for a person pressing the buttons.
 4. **Screenshot comparison** against the supplied references, iterating until
    they match. Blocked on the references: no image has been supplied yet, so
    the visual design has been built to the brief's stated constraints and not
