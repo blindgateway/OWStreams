@@ -22,6 +22,8 @@ Item {
     property string name: ""
     property color color: Theme.text
     property real strokeWidth: 1.75
+    /// So an unknown name warns once rather than on every repaint.
+    property bool missingReported: false
 
     implicitWidth: 24
     implicitHeight: 24
@@ -168,6 +170,14 @@ Item {
                 ctx.fill()
                 break
             default:
+                // Nothing is drawn, and the component says so once rather than
+                // drawing a placeholder that looks like a design decision.  A
+                // missing icon is a bug in the caller; a silent one is a bug
+                // nobody finds.
+                if (!icon.missingReported) {
+                    icon.missingReported = true
+                    console.warn("Icon: no drawing for \"" + icon.name + "\"")
+                }
                 break
             }
         }

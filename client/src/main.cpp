@@ -1,4 +1,5 @@
 #include <QGuiApplication>
+#include <QLoggingCategory>
 #include <QQmlApplicationEngine>
 #include <QtQml>
 #include <QQmlContext>
@@ -60,6 +61,19 @@ int main(int argc, char *argv[])
                   "messages above say why.");
         return 1;
     }
+
+    // Started -- and say so.
+    //
+    // Without this the only evidence that the application works is that it does
+    // not exit, which is a thing you learn by watching a terminal rather than
+    // by reading one.  On a build machine `QT_QPA_PLATFORM=offscreen` the whole
+    // run is silence otherwise, and silence is indistinguishable from a window
+    // that never appeared: an aborted run and a working one look the same.
+    qInfo() << "Stream" << app.applicationVersion() << "started;"
+            << "Qt" << qVersion() << "on" << QGuiApplication::platformName()
+            << "-- server:" << (session.serverUrl().isEmpty()
+                                     ? QStringLiteral("(not configured)")
+                                     : session.serverUrl());
 
     return app.exec();
 }
