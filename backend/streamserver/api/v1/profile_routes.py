@@ -115,7 +115,9 @@ async def reorder(payload: ProfileReorder, caller: CallerDep, context: Ctx) -> l
 async def set_pin(profile_id: ProfilePathId, payload: ProfilePinSet, caller: CallerDep,
                   context: Ctx) -> ProfileOut:
     try:
-        profile = context.profiles.set_pin(caller.user_id, profile_id, payload.pin)
+        profile = context.profiles.set_pin(
+            caller.user_id, profile_id, payload.pin, current_pin=payload.current_pin
+        )
     except ProfileError as exc:
         raise _handle(exc) from exc
     return ProfileOut(**profile.as_dict())

@@ -39,9 +39,19 @@ DEFAULT_KEY_BYTES = 32
 
 #: Bound on the work factor a *stored* hash may demand.  A row corrupted or
 #: tampered with to ask for n=2**20 would cost ~1 GiB and ~1 s per login; this
-#: ceiling keeps the worst case inside the 128 MiB budget the KDF is given, so
-#: a corrupt row is rejected rather than being allowed to exhaust the box.
+#: ceiling keeps the worst case inside the memory budget the KDF is given, so a
+#: corrupt row is rejected rather than being allowed to exhaust the box.
 _MAX_N = 2 ** 17
+#: scrypt allocates ``128 * r * n`` bytes.  Bounding n alone is not a bound on
+#: memory -- n=2**17 with r=32 asks for 512 MiB, which is past what
+#: ``verify_password`` (128 MiB) or ``verify_pin`` (64 MiB) will hand it, and
+#: hashlib then raises "memory limit exceeded" from inside a login.  The
+#: product is the thing that has to be bounded.
+_MAX_MEMORY = 128 * 1024 * 1024
+
+
+def _scrypt_memory(n: int, r: int) -> int:
+    return 128 * r * n
 
 _SCHEME_RE = re.compile(
     r"^scrypt\$(?P<n>\d+)\$(?P<r>\d+)\$(?P<p>\d+)\$(?P<salt>[A-Za-z0-9+/=]+)\$(?P<key>[A-Za-z0-9+/=]+)$"
@@ -113,6 +123,10 @@ def parse_hash(encoded: str) -> tuple[int, int, int, bytes, bytes]:
         raise PasswordHashError(f"scrypt n out of range: {n}")
     if not (1 <= r <= 32) or not (1 <= p <= 16):
         raise PasswordHashError("scrypt r/p out of range")
+    if _scrypt_memory(n, r) > _MAX_MEMORY:
+        raise PasswordHashError(
+            f"scrypt parameters demand {_scrypt_memory(n, r)} bytes"
+        )
     salt = _b64d(match["salt"])
     key = _b64d(match["key"])
     if len(salt) < 8 or len(key) < 16:
@@ -142,7 +156,13 @@ def verify_password(password: str, encoded: str | None, *,
                   DEFAULT_N, DEFAULT_R, DEFAULT_P, maxmem)
         return False
 
-    computed = _hash_raw(password or "", salt, n, r, p, maxmem)
+    try:
+        computed = _hash_raw(password or "", salt, n, r, p, maxmem)
+    except ValueError:
+        # A hash whose parameters are within our ceiling but past *this*
+        # caller's budget -- a lowered auth.scrypt_maxmem, say.  Rejecting it
+        # is correct; letting it raise would be a 500 on a login.
+        return False
     return hmac.compare_digest(computed, key)
 
 
@@ -205,10 +225,15 @@ def verify_pin(pin: str, encoded: str | None, *,
         n, r, p, salt, key = parse_hash(encoded)
     except PasswordHashError:
         return False
-    computed = hashlib.scrypt(
-        _pin_material(pin if isinstance(pin, str) else ""),
-        salt=salt, n=n, r=r, p=p, dklen=32, maxmem=maxmem,
-    )
+    try:
+        computed = hashlib.scrypt(
+            _pin_material(pin if isinstance(pin, str) else ""),
+            salt=salt, n=n, r=r, p=p, dklen=32, maxmem=maxmem,
+        )
+    except ValueError:
+        # Within our ceiling, past this caller's budget.  Reject the PIN, do
+        # not turn an unlock into a 500.
+        return False
     return hmac.compare_digest(computed, key)
 
 

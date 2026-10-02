@@ -234,8 +234,34 @@ class ProfileService:
         except ValueError as exc:
             raise ProfileError(str(exc), code="invalid_pin") from exc
 
-    def set_pin(self, user_id: int, profile_id: int, pin: str | None) -> ProfileView:
+    def set_pin(self, user_id: int, profile_id: int, pin: str | None,
+                *, current_pin: str | None = None) -> ProfileView:
+        """Set a profile's PIN, or clear it with ``pin=None``.
+
+        Once a PIN exists, changing *or clearing* it requires the current one.
+        The check used to sit after the clear branch, which meant the only way
+        to clear a forgotten PIN was a request the caller could make without
+        knowing it -- so the PIN was a speed bump with a documented off switch
+        attached.
+        """
         self.get_for_user(user_id, profile_id)
+
+        existing = repo.get_profile_pin(self.db, profile_id)
+        locked = bool(existing and existing.get("pin_hash"))
+        if locked:
+            if not current_pin:
+                raise ProfileError(
+                    "The current PIN must be supplied before changing it.",
+                    code="pin_change_requires_current", status_code=403,
+                )
+            if not passwords.verify_pin(current_pin, existing["pin_hash"]):
+                self.audit.record(
+                    SecurityEventTypes.PROFILE_PIN_FAILED, outcome="denied",
+                    user_id=user_id, profile_id=profile_id,
+                    detail={"operation": "set_pin"},
+                )
+                raise PinIncorrectError(attempts_left=None)
+
         if pin is None or pin == "":
             repo.update_profile(self.db, profile_id, pin_hash=None, pin_updated_at=None)
             self.audit.record(
@@ -243,14 +269,6 @@ class ProfileService:
                 user_id=user_id, profile_id=profile_id, detail={"cleared": True},
             )
             return ProfileView.from_row(repo.get_profile(self.db, profile_id) or {})
-
-        # Changing a PIN requires proving you know the old one when one exists.
-        existing = repo.get_profile_pin(self.db, profile_id)
-        if existing and existing.get("pin_hash"):
-            raise ProfileError(
-                "The current PIN must be supplied before setting a new one.",
-                code="pin_change_requires_current", status_code=403,
-            )
 
         repo.update_profile(
             self.db, profile_id, pin_hash=self._hash_pin(pin),
@@ -273,7 +291,7 @@ class ProfileService:
                 SecurityEventTypes.PROFILE_PIN_FAILED, outcome="denied",
                 user_id=user_id, profile_id=profile_id,
             )
-            raise ProfileIncorrectError()
+            raise PinIncorrectError()
         repo.update_profile(
             self.db, profile_id, pin_hash=self._hash_pin(new_pin),
             pin_updated_at=_utcnow_iso(),

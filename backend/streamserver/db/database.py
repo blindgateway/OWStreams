@@ -108,6 +108,16 @@ class Database:
             detect_types=0,
         )
         self._configure(conn)
+        # The database holds every account's password hash, every session's
+        # refresh-token hash and the whole audit trail.  sqlite3 creates it
+        # 0666 & ~umask, so on a box with a permissive umask it lands world
+        # readable.  Everything else this project writes -- the signing key, the
+        # config, the backups, the logs -- is chmodded to 0600; the database was
+        # the one place that was not.
+        try:
+            os.chmod(self.path, 0o600)
+        except OSError as exc:       # pragma: no cover - unusual filesystems
+            log.warning("cannot tighten permissions on %s: %s", self.path, exc)
         self._local.conn = conn
         with self._conn_lock:
             self._connections.append(conn)

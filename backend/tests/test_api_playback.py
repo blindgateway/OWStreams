@@ -31,7 +31,6 @@ from streamserver.media.streaming import (
     ("bytes=4095-4095", (4095, 4095)),
     ("bytes=0-99999", (0, 4095)),          # clamped to the file
     ("BYTES=0-9", (0, 9)),                 # case-insensitive
-    ("bytes=0-9, 20-29", None),            # multi-range: serve the whole file
 ])
 def test_valid_ranges(header, expected):
     result = parse_range_header(header, 4096)
@@ -39,6 +38,14 @@ def test_valid_ranges(header, expected):
         assert result is None
     else:
         assert (result.start, result.end) == expected
+
+
+@pytest.mark.parametrize("header", ["bytes=0-9, 20-29", "bytes=0-9,garbage"])
+def test_a_multi_range_request_is_refused(header):
+    """Serving it would need a multipart/byteranges body, and silently returning
+    the whole file instead makes a broken client look like it is working."""
+    with pytest.raises(RangeNotParseable):
+        parse_range_header(header, 4096)
 
 
 @pytest.mark.parametrize("header", ["bytes=4096-", "bytes=99999-", "bytes=-0", "bytes=5-1"])
@@ -135,10 +142,17 @@ def test_unsatisfiable_range_is_416_with_content_range(client, library, admin_pr
     assert response.headers["content-range"] == f"bytes */{dune['file_size_bytes']}"
 
 
-def test_malformed_range_falls_back_to_the_whole_file(client, library, admin_profile):
-    response = client.get(f"/api/v1/stream/{library[0]['id']}",
-                          headers={**admin_profile["headers"], "Range": "chunks=1-2"})
-    assert response.status_code == 200
+@pytest.mark.parametrize("range_header", ["chunks=1-2", "bytes=abc", "bytes=0-9, 20-29"])
+def test_a_malformed_range_is_416_not_a_whole_file(client, library, admin_profile, range_header):
+    """A client that sent nonsense must be told so.  Answering 200 with the
+    entire file hides the bug behind a stream that starts and then jumps."""
+    dune = library[0]
+    size = Path(app_media_path(client, dune["id"])).stat().st_size
+    response = client.get(f"/api/v1/stream/{dune['id']}",
+                          headers={**admin_profile["headers"], "Range": range_header})
+    assert response.status_code == 416
+    assert response.headers["Content-Range"] == f"bytes */{size}"
+    assert response.headers["Accept-Ranges"] == "bytes"
 
 
 def test_chunked_ranges_reassemble_into_the_file(client, library, admin_profile):
@@ -302,3 +316,33 @@ def test_playback_session_row_is_recorded(client, library, admin_profile):
     assert row["media_id"] == dune["id"]
     # The token itself is never stored; only its digest.
     assert hashlib.sha256(body["playback_token"].encode()).hexdigest() == row["token_hash"]
+
+# ---------------------------------------------------------------------------
+# A session id from a client is not proof of ownership
+# ---------------------------------------------------------------------------
+def test_another_profiles_playback_session_cannot_be_ended(client, library, admin_profile,
+                                                           second_session):
+    """Regression: ``finish_playback`` closed any session id it was handed, so
+    one account could end another's playback bookkeeping row."""
+    media_id = library[0]["id"]
+    admin_headers = admin_profile["headers"]
+    started = client.post(f"/api/v1/media/{media_id}/playback", headers=admin_headers)
+    assert started.status_code == 200, started.text
+    session_id = started.json()["session_id"]
+
+    stolen = client.post(f"/api/v1/media/{media_id}/playback/finish",
+                         headers=second_session["headers"],
+                         params={"session_id": session_id, "position_seconds": 1})
+    assert stolen.status_code == 404, stolen.text
+
+    # The owner's own request still works.
+    own = client.post(f"/api/v1/media/{media_id}/playback/finish", headers=admin_headers,
+                      params={"session_id": session_id, "position_seconds": 1})
+    assert own.status_code == 200
+
+
+def test_an_unknown_playback_session_is_404(client, library, admin_profile):
+    response = client.post(f"/api/v1/media/{library[0]['id']}/playback/finish",
+                           headers=admin_profile["headers"],
+                           params={"session_id": "not-a-session"})
+    assert response.status_code == 404

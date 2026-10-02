@@ -355,7 +355,7 @@ The bytes. Honours `Range` per RFC 9110 §14:
 | `bytes=a-` | 206 from `a` to the end |
 | `bytes=-n` | 206, the last `n` bytes |
 | unsatisfiable | 416 with `Content-Range: bytes */size` |
-| unparseable | 400 |
+| unparseable, or multi-range (`bytes=0-9, 20-29`) | 416 with `Content-Range: bytes */size` |
 
 Also: 403 when a playback token names a different title or profile, 404 when
 hidden, 410 when missing. A range span over `media.max_range_span` (512 MiB) is

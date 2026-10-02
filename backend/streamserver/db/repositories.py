@@ -1510,11 +1510,29 @@ def touch_playback_session(db: Database, session_id: str, *, bytes_served: int =
     )
 
 
-def end_playback_session(db: Database, session_id: str) -> None:
-    db.execute(
-        "UPDATE playback_sessions SET ended = 1, last_seen_at = datetime('now') WHERE id = ?",
-        (session_id,),
+def end_playback_session(db: Database, session_id: str, *,
+                        profile_id: int | None = None,
+                        user_id: int | None = None) -> int:
+    """Close a playback session.  Returns the number of rows actually closed.
+
+    Scoped to the caller: a session id supplied by a client is not proof of
+    ownership, and this row carries the "what was actually watched" record.
+    Passing no scope is for internal callers that have already established it.
+    """
+    where = ["id = ?", "ended = 0"]
+    params: list[Any] = [session_id]
+    if profile_id is not None:
+        where.append("profile_id = ?")
+        params.append(int(profile_id))
+    if user_id is not None:
+        where.append("user_id = ?")
+        params.append(int(user_id))
+    result = db.execute(
+        "UPDATE playback_sessions SET ended = 1, last_seen_at = datetime('now') "
+        f"WHERE {' AND '.join(where)}",
+        tuple(params),
     )
+    return int(result.changes)
 
 
 def get_playback_session(db: Database, session_id: str) -> dict[str, Any] | None:

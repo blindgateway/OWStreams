@@ -478,3 +478,45 @@ def test_audit_trail_never_contains_credentials(client, owner):
     assert "ssat." not in text
     assert "ssrt." not in text
     assert "password" not in text.lower().replace("must_change_password", "")
+
+# ---------------------------------------------------------------------------
+# Nothing in a user row may reach a client
+# ---------------------------------------------------------------------------
+@pytest.mark.parametrize("call", ["create", "patch"])
+def test_no_account_endpoint_publishes_the_password_hash(client, owner, call):
+    """Regression: the create and patch handlers built their response from a
+    raw ``users`` row and the response model allowed extra fields, so
+    ``password_hash`` -- a scrypt hash an attacker can grind offline -- was
+    published on both."""
+    headers = owner["headers"]
+    if call == "create":
+        response = client.post("/api/v1/admin/users", headers=headers, json={
+            "username": "someone", "password": "a-strong-password-2026",
+        })
+        assert response.status_code == 201
+        body = response.json()
+        assert body["username"] == "someone"
+    else:
+        response = client.patch("/api/v1/admin/users/1", headers=headers,
+                                json={"is_active": True})
+        assert response.status_code == 200
+        body = response.json()
+
+    assert "password_hash" not in body
+    assert "scrypt$" not in response.text
+    # And nothing from the users table that is not a declared field.
+    assert set(body) <= {
+        "id", "username", "display_name", "email", "is_admin", "is_active",
+        "must_change_password", "created_at", "updated_at", "last_login_at",
+    }
+
+
+def test_the_user_listing_shape_matches_the_single_user_shape(client, owner):
+    """One shape for an account, everywhere, so a client does not have to
+    handle two versions of the same thing."""
+    headers = owner["headers"]
+    listed = client.get("/api/v1/admin/users", headers=headers).json()[0]
+    single = client.get("/api/v1/auth/me", headers=headers).json()["user"]
+    for field in ("id", "username", "display_name", "is_admin", "must_change_password"):
+        assert field in listed, field
+        assert field in single, field

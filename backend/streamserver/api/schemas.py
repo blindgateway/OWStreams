@@ -186,7 +186,9 @@ class ProfileUpdate(StrictModel):
 
 
 class ProfilePinSet(StrictModel):
+    #: ``null`` clears the PIN, which on a locked profile needs ``current_pin``.
     pin: str | None = Field(default=None, pattern=r"^\d{4,8}$")
+    current_pin: str | None = Field(default=None, pattern=r"^\d{4,8}$")
 
 
 class ProfilePinChange(StrictModel):
@@ -335,15 +337,26 @@ class AdminUserCreate(StrictModel):
 
 
 class AdminUserOut(BaseModel):
-    model_config = ConfigDict(extra="allow")
+    """One account, as an administrator sees it.
+
+    ``extra="ignore"``, not ``"allow"``: these models are built from a raw
+    ``users`` row, and ``extra="allow"`` publishes whatever else that row
+    carries -- including ``password_hash``, which it does.  Declaring the
+    fields here and dropping the rest means adding a column to ``users``
+    cannot leak it by accident.
+    """
+
+    model_config = ConfigDict(extra="ignore")
 
     id: int
     username: str
     display_name: str
+    email: str | None = None
     is_admin: bool
     is_active: bool
     must_change_password: bool
     created_at: str
+    updated_at: str | None = None
     last_login_at: str | None = None
 
 

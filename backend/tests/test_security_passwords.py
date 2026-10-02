@@ -182,3 +182,29 @@ def test_hash_format_is_regex_parseable():
     assert re.fullmatch(
         r"scrypt\$\d+\$\d+\$\d+\$[A-Za-z0-9+/=]+\$[A-Za-z0-9+/=]+", encoded
     ), encoded
+
+@pytest.mark.parametrize("n,r", [
+    (2 ** 17, 32),      # 512 MiB -- inside the n ceiling, past any budget
+    (2 ** 16, 16),      # 128 MiB, exactly at the ceiling
+    (2 ** 15, 64),      # p-independent, but r is out of range
+])
+def test_a_hash_that_demands_too_much_memory_is_rejected(n, r):
+    """Regression: only n was bounded, so ``128 * r * n`` could exceed the
+    budget hashlib is given -- and hashlib's "memory limit exceeded" is a
+    ValueError raised from inside a login."""
+    import base64
+
+    encoded = "scrypt${}${}${}${}${}".format(
+        n, r, 1,
+        base64.b64encode(b"0123456789abcdef").decode(),
+        base64.b64encode(b"0" * 32).decode(),
+    )
+    assert passwords.verify_password("anything", encoded) is False
+    assert passwords.verify_pin("1234", encoded) is False
+
+
+def test_a_hash_over_the_callers_budget_is_rejected_not_raised():
+    """A stored hash that is legal by our ceiling but past the caller's own
+    maxmem must fail the verification, not raise out of it."""
+    encoded = passwords.hash_password("correct horse", n=2 ** 15)
+    assert passwords.verify_password("correct horse", encoded, maxmem=1024) is False

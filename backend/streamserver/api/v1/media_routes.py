@@ -120,7 +120,14 @@ async def finish_playback(media_id: MediaPathId, request: Request, context: Ctx,
                           position_seconds: Annotated[float, Query(ge=0)] = 0.0,
                           session_id: str | None = None) -> OkResponse:
     if session_id:
-        repo.end_playback_session(context.db, session_id)
+        # Scoped to this caller: an id supplied by a client is not proof of
+        # ownership, and ending somebody else's playback is a cross-account
+        # write even though the history it records is correctly attributed.
+        closed = repo.end_playback_session(
+            context.db, session_id, profile_id=profile_id, user_id=caller.user_id
+        )
+        if not closed:
+            raise HTTPException(status_code=404, detail="No such playback session.")
     context.history.record_progress(
         profile_id, media_id, position_seconds=position_seconds, completed=True
     )
@@ -283,14 +290,12 @@ async def stream(
 
     try:
         rng = streaming.parse_range_header(request.headers.get("range"), size)
-    except streaming.RangeNotSatisfiable as exc:
+    except (streaming.RangeNotSatisfiable, streaming.RangeNotParseable) as exc:
         return Response(
             status_code=416,
-            headers={"Content-Range": f"bytes */{exc.size}",
+            headers={"Content-Range": f"bytes */{size}",
                      "Accept-Ranges": "bytes"},
         )
-    except streaming.RangeNotParseable:
-        rng = None
 
     if rng is not None:
         start, end = streaming.clamp_span(

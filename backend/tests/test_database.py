@@ -327,3 +327,12 @@ def test_restore_of_a_missing_file_fails_clearly(tmp_path: Path, db: Database):
 def test_size_and_counts(db: Database):
     assert db.size_bytes() > 0
     assert db.table_counts()["media"] == 0
+
+def test_the_database_file_is_not_world_readable(db, config):
+    """The database holds every account's password hash, every session's
+    refresh-token hash and the audit trail.  sqlite3 creates the file
+    0666 & ~umask, so a permissive umask used to leave it world-readable even
+    though every other secret this project writes is chmodded to 0600."""
+    db.connection()  # the file is created lazily, on first use
+    mode = config.database_file.stat().st_mode
+    assert mode & 0o077 == 0, f"database is {oct(mode)}, expected no group/other bits"

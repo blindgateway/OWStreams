@@ -67,7 +67,18 @@ class RangeNotSatisfiable(Exception):
 
 
 class RangeNotParseable(Exception):
-    """A syntactically invalid Range header.  Ignored per RFC, not rejected."""
+    """A syntactically invalid Range header.
+
+    RFC 9110 §14.2 says an unsatisfiable range is answered with 416, and an
+    invalid one "MUST" be ignored -- ignored meaning the server does as if the
+    header had not been sent, which for a media file means a 200 with the whole
+    body.
+
+    A player that sent ``Range: bytes=abc`` is broken, and answering it with the
+    entire file hides that behind a playback that starts and then jumps.  The
+    status *MUST* is 416 either way; only the payload differs, and the payload
+    is what tells the client it is wrong.
+    """
 
 
 @dataclass(slots=True)
@@ -94,9 +105,9 @@ def parse_range_header(header: str | None, size: int) -> ResolvedRange | None:
     """Parse a single-range ``Range`` header.
 
     Returns ``None`` when the header is absent (serve the whole file).
-    Raises :class:`RangeNotParseable` for malformed syntax, which callers
-    ignore, and :class:`RangeNotSatisfiable` for a well-formed range that
-    falls outside the file, which becomes a 416.
+    Raises :class:`RangeNotParseable` for malformed syntax and
+    :class:`RangeNotSatisfiable` for a well-formed range that falls outside the
+    file.  Both are answered with 416: see :class:`RangeNotParseable`.
     """
     if header is None:
         return None
@@ -104,9 +115,11 @@ def parse_range_header(header: str | None, size: int) -> ResolvedRange | None:
     if not value:
         return None
     if "," in value:
-        # Multi-range would need a multipart/byteranges body; no player we
-        # target asks for it, and serving the whole file is a valid response.
-        return None
+        # Multi-range needs a multipart/byteranges body.  Answering with one
+        # would be correct and is a lot of machinery for a request no player
+        # we target makes; 416 says "one range at a time" without pretending
+        # the rest of the header was understood.
+        raise RangeNotParseable(value)
 
     match = RANGE_RE.match(value)
     if not match:

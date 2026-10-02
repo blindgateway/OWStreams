@@ -133,12 +133,44 @@ def test_setting_a_pin_over_an_existing_one_needs_the_current_pin(client, owner)
 def test_pin_can_be_cleared(client, owner):
     profile = _create(client, owner["headers"], name="Kids", pin="1111")
     cleared = client.post(f"/api/v1/profiles/{profile['id']}/pin",
-                          headers=owner["headers"], json={"pin": None})
+                          headers=owner["headers"],
+                          json={"pin": None, "current_pin": "1111"})
     assert cleared.status_code == 200
     assert cleared.json()["has_pin"] is False
     # With no PIN set, any submission is accepted (and is a no-op).
     assert client.post(f"/api/v1/profiles/{profile['id']}/unlock", headers=owner["headers"],
                        json={"pin": "9999"}).status_code == 200
+
+
+def test_clearing_a_pin_requires_the_current_one(client, owner):
+    """A locked profile whose PIN has been forgotten must be recoverable by the
+    account owner from the shell -- not by anyone holding a stolen session."""
+    profile = _create(client, owner["headers"], name="Kids", pin="1111")
+
+    without = client.post(f"/api/v1/profiles/{profile['id']}/pin",
+                          headers=owner["headers"], json={"pin": None})
+    assert without.status_code == 403
+    assert without.json()["error"] == "pin_change_requires_current"
+
+    wrong = client.post(f"/api/v1/profiles/{profile['id']}/pin",
+                        headers=owner["headers"],
+                        json={"pin": None, "current_pin": "9999"})
+    assert wrong.status_code == 401
+    assert wrong.json()["error"] == "pin_incorrect"
+
+    assert client.get(f"/api/v1/profiles/{profile['id']}/locked",
+                      headers=owner["headers"]).json()["requires_pin"] is True
+
+
+def test_replacing_a_pin_requires_the_current_one(client, owner):
+    profile = _create(client, owner["headers"], name="Kids", pin="1111")
+    without = client.post(f"/api/v1/profiles/{profile['id']}/pin",
+                          headers=owner["headers"], json={"pin": "2222"})
+    assert without.status_code == 403
+
+    ok = client.post(f"/api/v1/profiles/{profile['id']}/pin", headers=owner["headers"],
+                     json={"pin": "2222", "current_pin": "1111"})
+    assert ok.status_code == 200
 
 
 def test_pin_attempts_are_throttled(client, owner):
