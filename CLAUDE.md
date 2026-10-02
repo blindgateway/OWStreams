@@ -13,7 +13,7 @@ Then read [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the design and
 ## State
 
 - `backend/` — complete, 602 tests passing, no stubs.
-- `client/` — builds and runs, 94 tests passing across 8 suites. Packaging and
+- `client/` — builds and runs, 101 tests passing across 9 suites. Packaging and
   the screenshot comparison are outstanding; see [docs/ROADMAP.md](docs/ROADMAP.md).
 - `docs/` — complete.
 
@@ -21,8 +21,11 @@ Then read [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the design and
 
 1. **Run the tests before and after any change.** `cd backend && python -m pytest`
    (602 tests, about two and a half minutes) and, for the client,
-   `cmake --build build-test && (cd build-test && ctest)` (94 tests, seconds).
-   If they were failing on a clean checkout, say so.
+   `cmake --build build-test && (cd build-test && ctest)` (101 tests, seconds).
+   **And start the client** — `QT_QPA_PLATFORM=offscreen ./build/stream-client`
+   for ten seconds — because a QML layout that cannot work is a runtime warning
+   no linter and no unit test produces. If the tests were failing on a clean
+   checkout, say so.
 2. **Read the code, not the docstring.** Docstrings in this repository have
    been wrong before, and a test caught it.
 3. **Authorization is server-side.** A client-side check is not a check.

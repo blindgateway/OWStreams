@@ -6,7 +6,7 @@ python -m pytest          # 602 tests, about 2m30s
 
 cd ../client
 cmake -S . -B build-test -G Ninja && cmake --build build-test
-(cd build-test && ctest)  # 94 tests, seconds
+(cd build-test && ctest)  # 101 tests, seconds
 ```
 
 Every server test runs offline, needs no root, and touches no network. The
@@ -56,6 +56,7 @@ client/tests/
 ├── tst_apiclient.cpp            what the client puts on the wire
 ├── tst_apierror.cpp             the error taxonomy
 ├── tst_credentialaccess.cpp     which requests carry a token
+├── tst_credentialstore.cpp      what the refresh token is allowed to touch
 ├── tst_sessioncontroller.cpp    the session state machine
 ├── tst_librarymodel.cpp         list-model roles, paging, filtering
 ├── tst_appcontroller.cpp        navigation and per-screen loading
@@ -179,6 +180,30 @@ cannot delete the last administrator; cannot demote or deactivate yourself;
 deactivating revokes sessions; `password_hash` never appears in a response;
 `delete_file=true` is always refused; a path outside the roots is refused;
 `/admin/settings` reports whether a key is configured, never the key.
+
+### Credentials
+
+`CredentialStore` decides three security properties, and they are asserted in
+`tst_credentialstore.cpp`:
+
+- with no secure backend, `saveTokens` returns false and writes **nothing** --
+  there is no fallback to a settings file, because a remembered login is a
+  convenience and plaintext is not a trade worth making quietly;
+- tokens are keyed by username, so one account's session is not another's and
+  `clearTokens` removes one account rather than all of them;
+- `forgetEverything` removes the `secret/` group as well as the server and
+  profile settings, which is what "remove this server" has to mean to somebody
+  holding a stolen laptop.
+
+The *backends* are not tested here and cannot be: the Secret Service needs a
+running daemon, DPAPI needs Windows and the Android Keystore needs a device.
+What is tested is the decision logic, which runs on a headless build machine.
+
+Availability is "the tool is installed **and** the keyring answers", checked
+with a `secret-tool lookup` at construction rather than a `store` -- a probe
+that writes a secret to prove the keyring works leaves a secret behind. The
+login screen names the backend it looked for, so a user who cannot be
+remembered gets a reason rather than a mystery.
 
 ### The client's contract with the server
 

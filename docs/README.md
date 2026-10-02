@@ -5,7 +5,7 @@ holds your library, your accounts and your per-profile state; a client that
 runs on a desktop, a phone, and eventually a TV.
 
 **Status.** Both halves are built and tested: the server at 602 tests, the
-client at 94 across 8 suites — of which fifteen run the client against a real
+client at 101 across 9 suites — of which fifteen run the client against a real
 server rather than a canned response. No stubs, no TODOs in core functionality.
 Packaging and the screenshot comparison are outstanding; see
 [ROADMAP.md](ROADMAP.md). Nothing here is a mock-up or a placeholder, and what

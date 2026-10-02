@@ -118,13 +118,13 @@ SessionController::SessionController(QObject *parent)
 }
 
 QString SessionController::serverUrl() const { return m_api->baseUrl(); }
+QString SessionController::username() const { return m_api->username(); }
+int SessionController::profileId() const { return m_api->profileId(); }
+bool SessionController::hasSecureStorage() const { return m_credentials->isAvailable(); }
 QString SessionController::credentialBackend() const
 {
     return m_credentials->backendName();
 }
-QString SessionController::username() const { return m_api->username(); }
-int SessionController::profileId() const { return m_api->profileId(); }
-bool SessionController::hasSecureStorage() const { return m_credentials->isAvailable(); }
 
 void SessionController::setState(State state)
 {

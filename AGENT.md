@@ -9,7 +9,7 @@ what is true of the code, so you do not have to rediscover it.
 
 - `backend/` — **complete and tested.** 602 tests, no failures, no stubs, no
   TODOs in core functionality.
-- `client/` — **builds, runs and is tested.** 94 tests across 8 suites, of
+- `client/` — **builds, runs and is tested.** 101 tests across 9 suites, of
   which 15 run against a real server. Packaging for Windows and Android, and
   the screenshot comparison against the supplied references, are outstanding.
 - `docs/` — complete.
@@ -25,12 +25,18 @@ cd backend
 python -m pytest                       # 602 tests, about 2m30s
 
 cd ../client
-cmake -S . -B build-test -G Ninja      # once
-cmake --build build-test && (cd build-test && ctest)   # 94 tests, seconds
+cmake -S . -B build-test -G Ninja -DSTREAM_BUILD_TESTS=ON   # once
+cmake --build build-test && (cd build-test && ctest)       # 101 tests, seconds
+
+# And start the application.  qmllint cannot see a QML layout that cannot
+# work: `NavItem.qml` anchored a Row's children as well as the Row, which Qt
+# reports once per frame at runtime and nothing reports at build time.
+cmake --build build && QT_QPA_PLATFORM=offscreen timeout 10 ./build/stream-client
 ```
 
-Both must be green before you start. If either is not green on a clean
-checkout, that is a bug to report, not to work around.
+Both suites must be green before you start, and the application must start.
+If either is not green on a clean checkout, that is a bug to report, not to
+work around.
 
 ## Layout and layering
 

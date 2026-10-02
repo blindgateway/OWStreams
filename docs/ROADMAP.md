@@ -28,7 +28,7 @@ started, and the list says so.
 - 14 CLI subcommands sharing the same services as the API
 - 602 tests: unit, integration, API, security, media, CLI
 
-**Client — builds, runs, and is tested (94 tests across 8 suites).**
+**Client — builds, runs, and is tested (101 tests across 9 suites).**
 
 Qt 6 Quick / QML, C++ core, CMake. Verified on this machine (Qt 6.11.2 devel
 packages, CMake 4.3.0, Ninja); `qmllint` runs as a `POST_BUILD` step and fails
@@ -62,7 +62,7 @@ the build on any warning.
   a progress report every fifteen seconds of *watching*.
 - **Models.** `MediaListModel` (paged, sortable, filtered), `HomeScreenModel`
   (eight rails from one request), `PlaybackController`.
-- **Tests.** 79 unit assertions over seven suites, plus `tst_e2e.cpp`: fifteen
+- **Tests.** 86 unit assertions over eight suites, plus `tst_e2e.cpp`: fifteen
   tests against the *production* server, started by `tests/e2e/harness.py` with
   a real config file, a real database, a real account and a real clip ffmpeg
   generated. It found nine defects the other suites could not.

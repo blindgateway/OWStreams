@@ -49,6 +49,37 @@ Backend detectBackend()
 #endif
 }
 
+/// Whether the keyring will actually answer *right now*.
+///
+/// Separate from `detectBackend` on purpose.  "The tool is installed" is a
+/// property of the machine; "there is a keyring daemon, and this session can
+/// reach it" is not.  Keyring the first matters on a locked desktop: nothing
+/// can be stored or fetched there, and reporting "unavailable" is the honest
+/// answer -- a remembered login is a convenience, and telling the user it was
+/// remembered when it cannot be is worse than not remembering it.
+///
+/// `lookup` is used rather than `store` because it cannot *create* anything:
+/// a probe that writes a secret to prove the keyring works is a probe that
+/// leaves a secret behind, and on a machine where the answer is "no" it would
+/// leave the wrong one.  `secret-tool` distinguishes the three cases in the
+/// exit code -- 0 for an item, 1 for no item, and a failure with its own
+/// message and code for no daemon -- so one lookup answers the question.
+bool secretServiceResponds()
+{
+    QProcess probe;
+    probe.start(QStringLiteral("secret-tool"),
+                {QStringLiteral("lookup"), QStringLiteral("application"),
+                 QStringLiteral("stream-keyring-probe")});
+    if (!probe.waitForFinished(3000))
+        return false;
+    if (probe.exitStatus() != QProcess::NormalExit)
+        return false;               // hung, or could not be run at all
+    // 0 is an item (there is one, which is odd but not a failure to store);
+    // 1 is "no such item", which is exactly what an empty keyring says.  Both
+    // mean the service answered.
+    return probe.exitCode() == 0 || probe.exitCode() == 1;
+}
+
 }  // namespace
 
 CredentialStore::CredentialStore(QObject *parent)
@@ -56,7 +87,8 @@ CredentialStore::CredentialStore(QObject *parent)
 {
     const Backend backend = detectBackend();
     m_backend = backendLabel(backend);
-    m_available = backend != Backend::None;
+    m_available = backend != Backend::None
+        && (backend != Backend::SecretService || secretServiceResponds());
 
 #ifdef Q_OS_WIN
     m_secretKey = QStringLiteral("Stream/Session");
@@ -114,11 +146,21 @@ int CredentialStore::lastProfile(const QString &accountKey) const
 
 void CredentialStore::forgetEverything()
 {
+    // "Forget every server setting and every credential", so it has to reach the
+    // credentials: the `secret/` group is where the Windows backend puts its
+    // DPAPI blob, and the previous version removed `server/`, `profile/` and a
+    // single settings key while leaving every stored token where it was.  A
+    // user who removes a server expects the credential for it to be gone, and
+    // "remove this server" that keeps the refresh token has removed nothing
+    // that matters.
     QSettings settings;
     settings.beginGroup(QStringLiteral("server"));
     settings.remove(QString());
     settings.endGroup();
     settings.beginGroup(QStringLiteral("profile"));
+    settings.remove(QString());
+    settings.endGroup();
+    settings.beginGroup(QStringLiteral("secret"));
     settings.remove(QString());
     settings.endGroup();
     settings.remove(QStringLiteral("session/account"));
@@ -155,7 +197,6 @@ bool CredentialStore::saveTokens(const QString &accountKey, const QString &acces
     emit tokensChanged(accountKey);
     return true;
 #else
-    Q_UNUSED(accountKey)
     switch (detectBackend()) {
 #ifdef Q_OS_WIN
     case Backend::WindowsDpapi: {
@@ -169,7 +210,9 @@ bool CredentialStore::saveTokens(const QString &accountKey, const QString &acces
         const QByteArray encrypted(reinterpret_cast<char *>(out.pbData),
                                    static_cast<int>(out.cbData));
         SecureZeroMemory(out.pbData, out.cbData);
-        settingsSet(QStringLiteral("secret/") + m_secretKey, encrypted);
+        settingsSet(QStringLiteral("secret/") + m_secretKey + QLatin1Char('/')
+                        + accountKey,
+                    encrypted);
         emit tokensChanged(accountKey);
         return true;
     }
@@ -178,7 +221,8 @@ bool CredentialStore::saveTokens(const QString &accountKey, const QString &acces
         QProcess tool;
         tool.start(QStringLiteral("secret-tool"),
                    {QStringLiteral("store"), QStringLiteral("--label=Stream session"),
-                    QStringLiteral("application"), m_secretKey});
+                    QStringLiteral("application"), m_secretKey,
+                    QLatin1Char('/') + accountKey});
         tool.waitForStarted(2000);
         tool.write(blob);
         tool.closeWriteChannel();
@@ -207,8 +251,9 @@ QVariantMap CredentialStore::loadTokens(const QString &accountKey) const
     switch (detectBackend()) {
 #ifdef Q_OS_WIN
     case Backend::WindowsDpapi: {
-        const QByteArray encrypted =
-            settingsValue(QStringLiteral("secret/") + m_secretKey).toByteArray();
+        const QByteArray encrypted = settingsValue(
+            QStringLiteral("secret/") + m_secretKey + QLatin1Char('/') + accountKey)
+                                         .toByteArray();
         if (encrypted.isEmpty())
             return result;
         DATA_BLOB in{static_cast<DWORD>(encrypted.size()),
@@ -227,7 +272,8 @@ QVariantMap CredentialStore::loadTokens(const QString &accountKey) const
     case Backend::SecretService: {
         QProcess tool;
         tool.start(QStringLiteral("secret-tool"),
-                   {QStringLiteral("lookup"), QStringLiteral("application"), m_secretKey});
+                   {QStringLiteral("lookup"), QStringLiteral("application"),
+                    m_secretKey + QLatin1Char('/') + accountKey});
         if (!tool.waitForFinished(3000) || tool.exitCode() != 0)
             return result;
         blob = tool.readAllStandardOutput().trimmed();
@@ -264,13 +310,16 @@ void CredentialStore::clearTokens(const QString &accountKey)
     switch (detectBackend()) {
 #ifdef Q_OS_WIN
     case Backend::WindowsDpapi:
-        settingsSet(QStringLiteral("secret/") + m_secretKey, QByteArray());
+        settingsSet(QStringLiteral("secret/") + m_secretKey + QLatin1Char('/')
+                        + accountKey,
+                    QByteArray());
         break;
 #endif
     case Backend::SecretService: {
         QProcess tool;
         tool.start(QStringLiteral("secret-tool"),
-                   {QStringLiteral("clear"), QStringLiteral("application"), m_secretKey});
+                   {QStringLiteral("clear"), QStringLiteral("application"),
+                    m_secretKey + QLatin1Char('/') + accountKey});
         tool.waitForFinished(3000);
         break;
     }
@@ -278,6 +327,5 @@ void CredentialStore::clearTokens(const QString &accountKey)
         break;
     }
 #endif
-    Q_UNUSED(accountKey)
     emit tokensChanged(accountKey);
 }

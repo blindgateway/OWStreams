@@ -110,7 +110,11 @@ Item {
             Layout.fillWidth: true
             Layout.topMargin: Theme.spaceXs
             visible: !screen.canRemember
-            text: qsTr("This device has no secure key storage, so this session will end when the app closes.")
+            // Names the backend, so "remember me is off" is a reason rather
+            // than a mystery.  On a locked keyring the tool is present and the
+            // store reports unavailable, and the two need different answers.
+            text: qsTr("This device could not open a secure key store (%1), so this session will end when the app closes.")
+                    .arg(App.credentialBackend)
             color: Theme.textMuted
             font.pixelSize: Theme.typeMicro
             font.family: Theme.family

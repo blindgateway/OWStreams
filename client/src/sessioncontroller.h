@@ -41,12 +41,16 @@ class SessionController : public QObject
     Q_PROPERTY(QString username READ username NOTIFY stateChanged)
     Q_PROPERTY(int profileId READ profileId NOTIFY stateChanged)
     Q_PROPERTY(bool hasSecureStorage READ hasSecureStorage CONSTANT)
+    /// Which keychain was looked for, and why remembering is off if it was not
+    /// found.  Shown next to the remember-me checkbox: a user who cannot be
+    /// remembered is told *which* backend was looked for rather than finding
+    /// out by signing in again tomorrow.
+    Q_PROPERTY(QString credentialBackend READ credentialBackend CONSTANT)
     Q_PROPERTY(QString lastError READ lastError NOTIFY stateChanged)
     Q_PROPERTY(QVariantMap user READ user NOTIFY userChanged)
     Q_PROPERTY(QVariantList profiles READ profiles NOTIFY profilesChanged)
     Q_PROPERTY(QVariantMap serverInfo READ serverInfo NOTIFY serverInfoChanged)
     Q_PROPERTY(QVariantList sessions READ sessions NOTIFY sessionsChanged)
-    Q_PROPERTY(QString credentialBackend READ credentialBackend CONSTANT)
     Q_PROPERTY(QString serverVersion READ serverVersion NOTIFY serverInfoChanged)
 
 public:

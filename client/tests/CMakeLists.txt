@@ -40,8 +40,8 @@ set(STREAM_MODEL_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/../src/playbackcontroller.cpp
 )
 
-foreach(suite credentialaccess apierror apiclient librarymodel appcontroller
-             playbackcontroller sessioncontroller)
+foreach(suite credentialaccess credentialstore apierror apiclient librarymodel
+             appcontroller playbackcontroller sessioncontroller)
     if(suite STREQUAL "librarymodel" OR suite STREQUAL "appcontroller"
        OR suite STREQUAL "playbackcontroller")
         set(suite_sources ${STREAM_MODEL_SOURCES})
