@@ -366,6 +366,28 @@ the account's *first* profile and answers 200 — the one case where silence is
 worse than an error. Per-profile routes answer 400 `profile_required` when no
 profile is named, so a dropped header shows up immediately.
 
+**The client aborts at startup with nothing on stderr**
+
+That is what a missing platform plugin looks like: `QGuiApplication`'s
+constructor calls `qFatal`, and on some builds the message never reaches a
+terminal. `gdb -batch -ex run -ex "bt 12" ./build/stream-client` ends at
+`init_platform`, which is Qt failing to find the plugin and nothing else.
+
+Check the two things that decide it:
+
+```bash
+ls /usr/lib64/qt6/plugins/platforms/    # what exists
+QT_QPA_PLATFORM=xcb ./stream-client     # name one explicitly
+```
+
+`QT_QPA_PLATFORM` has to name a plugin that is *deployed*, and on Fedora the
+`xcb` plugin additionally needs `libxcb-cursor0` — Qt says so in a message
+that is easy to miss among the rest. A tree assembled by Qt's deploy step
+carries the plugins Qt selected for the *host*, which is `xcb` on a desktop
+and is not what a headless build machine needs; the same tree then aborts
+with `QT_QPA_PLATFORM=offscreen`, which is a different plugin entirely. See
+[ROADMAP.md](ROADMAP.md#not-started) for the state of packaging.
+
 **The QML loads but every object is `undefined`**
 
 The build tree's `Stream` module is not on the library search path. Running the

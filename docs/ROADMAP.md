@@ -77,9 +77,44 @@ the build on any warning.
 In order, with what each one needs.
 
 1. **Packaging.** Linux first (the deployment target is a Fedora 44 server), then
-   Windows 10+ and Android 12+. Needs `qt_deploy_runtime_dependencies`, an
-   icon, and a per-platform install target. The client currently builds and
-   runs from the source tree and nothing more.
+   Windows 10+ and Android 12+. Needs an install target, an application icon,
+   and — the part that is actually hard — the Qt runtime.
+
+   The blocker is specific and worth recording, because it is not a missing
+   package: **Qt's own deployment support does not work unmodified on this
+   Qt and this distribution, and it fails *quietly*.** Four separate things
+   are wrong, and each has to be worked around:
+
+   - the generic deploy tool excludes `/lib` and `/lib64` from its dependency
+     scan (the usual "do not bundle the system C library" default), and on
+     Fedora that is where everything is — libc, libstdc++, every library Qt
+     links. It resolves nothing, reports success, and writes an empty tree;
+   - `POST_EXCLUDE_REGEXES` is *silently ignored*, because the function builds
+     the exclusion list itself from a variable the caller cannot see;
+   - the QML modules are collected by a different function,
+     `qt6_deploy_qml_imports`, which `qt_generate_deploy_app_script` never
+     calls on this path, and there is no `qt6_generate_deploy_qml_import_
+     script` to wrap it — so the script that calls it has to be written by
+     hand;
+   - the generated support file unconditionally sets
+     `__QT_DEPLOY_MUST_ADJUST_PLUGINS_RPATH`, and the adjustment is CMake's
+     `file(RPATH_SET)`, which *refuses* a file that has no existing RUNPATH —
+     which is every rpm-packaged Qt plugin. The deploy step dies after
+     copying the tree.
+
+   With all four worked around the tree does assemble and the application
+   aborts at startup inside `QGuiApplication`'s constructor, which is the
+   state this was left in rather than a shipped result. The likely remaining
+   cause is that only the *xcb* platform plugin is deployed and the headless
+   `offscreen` plugin the build machine needs is not among them; that is the
+   next thing to establish, and the tree is 380 MB, which is the other thing
+   worth fixing.
+
+   The alternatives to working around it, in order of preference: a
+   distribution-provided `linuxdeployqt`; a Qt build whose plugins carry a
+   RUNPATH; or AppImage, which sidesteps the question by shipping a runtime
+   nobody has to reconcile. Windows (`windeployqt`) and Android are expected
+   to be simpler — neither goes near this code.
 2. **Client-side protections.** Screenshot blocking and `FLAG_SECURE` where the
    platform allows it, with the limits documented where it does not. The
    brief is explicit that a limitation must be documented rather than papered
