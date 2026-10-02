@@ -302,16 +302,42 @@ and the only symptom is that nothing is ever persisted. The regression tests
 for all nine are in the suite — four in `tst_apiclient.cpp` (which asserts on
 the bytes) and the rest here and in the client suites.
 
+## The QML, and how it is checked
+
+`qmllint` is a static check: it resolves types, properties and bindings, and it
+fails the build on any warning. It is not a runtime. What it cannot see is the
+kind of defect the first `stream-client` run reported:
+
+```
+warning: qml/ui/NavItem.qml:51:5: QML Row: Cannot specify left, right,
+horizontalCenter, fill or centerIn anchors for items inside Row.
+Row will not function.
+```
+
+A `Row` places its children; anchoring them as well is contradictory, and Qt
+says so — once per frame, per navigation bar. It is a real layout bug, the
+navigation bar was not laying out, and nothing in the build or the test suite
+mentioned it.
+
+So: **run the application.** Not as a test, as the first thing after a build
+that touches a screen. The entry point exits non-zero if the root object fails
+to instantiate, so a QML error that breaks the window is a failure rather than a
+blank one.
+
 ## What is not covered
 
 Stated plainly, because a test suite that pretends is worse than none.
 
-- **QML itself.** The C++ behind the client is tested — the session machine,
+- **QML behaviour.** The C++ behind the client is tested — the session machine,
   the models, the player, the bytes on the wire, and the whole app against a
-  real server. The QML is checked by `qmllint` on every build, which is a
-  syntax, type and property check, not a behavioural one: nothing renders a
-  `Item` and asserts on it. The end-to-end suite drives the same controllers
-  the QML binds to, so a wrong *binding* would not be caught by it.
+  real server. The QML is checked two ways, and both are static:
+  `qmllint` on every build, which is a syntax, type and property check; and
+  starting the application, which is how `NavItem.qml`'s `Row` was found
+  anchoring its children — a runtime warning Qt emits once per frame, which no
+  linter reports and no unit test sees. Nothing *renders* an `Item` and asserts
+  on it, and the end-to-end suite drives the controllers the QML binds to
+  rather than the QML, so a binding that is wired to the wrong property would
+  not be caught by it.
 - **Screenshot comparison.** No reference image has been supplied, so the
   visual design has been built to the brief's stated constraints and not
   checked against anything.

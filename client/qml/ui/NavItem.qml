@@ -48,16 +48,24 @@ Item {
         visible: item.selected
     }
 
+    // A Row *places* its children; it does not lay them out, so the row is
+    // anchored and its children are left entirely to it.  The previous version
+    // anchored the Row and then anchored its children too -- including a
+    // `horizontalCenter` that was `undefined` in one state and set in the
+    // other -- and Qt said so on every frame of every navigation bar:
+    // "Cannot specify left, right, horizontalCenter, fill or centerIn anchors
+    // for items inside Row. Row will not function."  A runtime warning on every
+    // frame is a warning nobody reads, so the anchors moved to the row and the
+    // children are positioned by `spacing` and an explicit margin.
     Row {
+        id: contents
         anchors.left: parent.left
         anchors.leftMargin: item.showLabel ? Theme.spaceLg : 0
-        anchors.right: item.showLabel ? parent.right : parent.right
+        anchors.right: parent.right
         anchors.verticalCenter: parent.verticalCenter
         spacing: item.showLabel ? Theme.spaceMd : 0
 
         Icon {
-            anchors.verticalCenter: parent.verticalCenter
-            anchors.horizontalCenter: item.showLabel ? undefined : parent.horizontalCenter
             width: 22
             height: 22
             name: item.icon
@@ -65,7 +73,6 @@ Item {
         }
 
         Text {
-            anchors.verticalCenter: parent.verticalCenter
             visible: item.showLabel
             text: item.label
             color: item.selected ? Theme.text : Theme.textMuted

@@ -49,5 +49,17 @@ int main(int argc, char *argv[])
         []() { QCoreApplication::exit(-1); }, Qt::QueuedConnection);
 
     engine.loadFromModule("Stream", "Main");
+
+    // A root object that failed to instantiate is a *runtime* failure: the
+    // engine logs it, the process carries on, and the operator is left looking
+    // at a blank window with no exit code and no message.  Failing here, with
+    // what the engine said, is the difference between a crash report and a
+    // mystery.
+    if (engine.rootObjects().isEmpty()) {
+        qCritical("The main window could not be created. The QML engine's "
+                  "messages above say why.");
+        return 1;
+    }
+
     return app.exec();
 }
