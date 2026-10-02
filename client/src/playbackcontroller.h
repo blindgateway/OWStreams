@@ -1,5 +1,7 @@
 #pragma once
 
+#include <QtQml/qqmlregistration.h>
+
 #include <QObject>
 #include <QStringList>
 #include <QUrl>
@@ -9,6 +11,7 @@ class ApiClient;
 class QAudioOutput;
 class QMediaPlayer;
 class QTimer;
+class QVideoSink;
 
 /// Everything the player screen shows and everything it can ask for.
 ///
@@ -39,6 +42,8 @@ class QTimer;
 class PlaybackController : public QObject
 {
     Q_OBJECT
+    QML_ELEMENT
+    QML_UNCREATABLE("Provided by AppController; not constructible from QML.")
     Q_PROPERTY(int mediaId READ mediaId NOTIFY mediaIdChanged)
     Q_PROPERTY(QString title READ title NOTIFY titleChanged)
     Q_PROPERTY(QString posterUrl READ posterUrl NOTIFY posterUrlChanged)
@@ -90,9 +95,10 @@ public:
     /// The real thing: creates and owns its own media objects.
     explicit PlaybackController(ApiClient *api, QObject *parent = nullptr);
 
-    /// The headless one.  Whatever is passed is adopted (and deleted with us);
-    /// `nullptr` for either means *there is no such object*, and every path
-    /// through this class then behaves as a pure state machine.
+    /// The headless one.  The media objects are *not* adopted -- a test makes
+    /// them and destroys them -- and `nullptr` for either means *there is no
+    /// such object*, in which case every path through this class behaves as a
+    /// pure state machine: no dereference, no crash, inputs still clamped.
     PlaybackController(ApiClient *api, QMediaPlayer *player, QAudioOutput *audioOutput,
                       QObject *parent = nullptr);
 
@@ -120,13 +126,15 @@ public:
     bool audioTracksAvailable() const { return !m_audioTrackNames.isEmpty(); }
     bool subtitleTracksAvailable() const { return !m_subtitleTrackNames.isEmpty(); }
 
-    /// Hand the controller the `VideoOutput` its frames belong in.
+    /// Hand the controller the sink its frames belong in.
     ///
-    /// Not a property and not a slot, because it is wiring rather than state:
-    /// the player screen calls this once from `Component.onCompleted` and once
-    /// with `nullptr` on teardown.  A `QMediaPlayer` paints into a
-    /// `QVideoSink`, and `VideoOutput` owns exactly the one we want.
-    void setVideoOutput(QObject *item);
+    /// A `QVideoSink`, not a `VideoOutput`: the QML `VideoOutput` does not
+    /// derive from `QVideoSink`, so this has to be its `videoSink` property,
+    /// which is the one the player screen can reach.  Not a property and not a
+    /// slot, because it is wiring rather than state -- the screen calls this
+    /// once when it is built and once with `nullptr` on teardown, and nothing
+    /// else ever does.
+    void setVideoOutput(QVideoSink *sink);
 
     /// Ask the shell to advance or step back the queue.
     ///
@@ -173,6 +181,17 @@ signals:
     void errorOccurred(const QString &message);
     /// The screen should navigate away; the shell owns where "back" goes.
     void closeRequested();
+    /// This playback session was closed -- the viewer moved on, or stopped.
+    ///
+    /// Emitted at the *request*, beside `finishPlayback`, because the API
+    /// client only emits `playbackFinished` when the server acknowledges --
+    /// and a close that failed because the network dropped has to be visible
+    /// anyway.  A caller that cares about the acknowledgement listens for
+    /// `ApiClient::playbackFinished`; a caller that needs to know the viewer
+    /// has moved on listens for this.  Only a session that actually started
+    /// emits it: closing a title that never played would tell the server
+    /// somebody watched nothing at position zero.
+    void playbackSessionClosed();
     void nextRequested();
     void previousRequested();
     /// Every position this controller has told the server about.
@@ -202,10 +221,12 @@ signals:
 
 private:
     // -- wiring ---------------------------------------------------------
-    void adopt(QMediaPlayer *player, QAudioOutput *audioOutput);
-    void connectPlayer();
     void setState(State state);
     void setErrorMessage(const QString &message);
+    /// Every failure path ends here: message, state, and the one signal the
+    /// screen listens to.  Three of them existing separately is how a player
+    /// ends up in `Error` with nothing written to `errorMessage`.
+    void failWith(const QString &message);
 
     // -- media backend --------------------------------------------------
     void onPlaybackStarted(int mediaId, const QString &streamUrl, double startOffset,
@@ -223,9 +244,9 @@ private:
     void applyPendingSeek();
 
     // -- progress -------------------------------------------------------
-    /// Tell the server where we are, if `interval` of playback has passed
-    /// since the last time.  Called from both the position tick and `seek()`,
-    /// so a jump is recorded too.
+    /// Tell the server where we are, if fifteen seconds of *playback* have
+    /// passed since the last time.  Called from the position tick and from
+    /// `seek()`, so a jump is recorded too.
     void maybeReportProgress();
     /// Send the position now, regardless of the interval.  `complete` closes
     /// the session rather than merely recording progress.
@@ -238,7 +259,7 @@ private:
     ApiClient *m_api;
     QMediaPlayer *m_player = nullptr;
     QAudioOutput *m_audioOutput = nullptr;
-    QObject *m_videoOutput = nullptr;
+    QVideoSink *m_videoOutput = nullptr;
     QTimer *m_controlsTimer = nullptr;
 
     int m_mediaId = 0;
@@ -258,7 +279,6 @@ private:
     bool m_isPlaying = false;
     bool m_muted = false;
     bool m_controlsVisible = true;
-    bool m_hasReported = false;
 
     int m_audioTrackIndex = -1;
     int m_subtitleTrackIndex = -1;

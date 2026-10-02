@@ -14,7 +14,8 @@ AppController::AppController(ApiClient *api, QObject *parent)
       m_library(new MediaListModel(this)),
       m_favorites(new MediaListModel(this)),
       m_history(new MediaListModel(this)),
-      m_searchResults(new MediaListModel(this))
+      m_searchResults(new MediaListModel(this)),
+      m_player(new PlaybackController(api, this))
 {
     m_library->setEmptyMessage(tr("Nothing in the library yet."));
     m_favorites->setEmptyMessage(tr("No favourites yet."));
@@ -76,8 +77,18 @@ AppController::AppController(ApiClient *api, QObject *parent)
         m_detail = media.toVariantMap();
         m_detailId = m_detail.value(QStringLiteral("id")).toInt();
         emit detailChanged();
-        setScreen(Detail);
         setBusy(false);
+        if (m_pendingPlayerMediaId == m_detailId && m_pendingPlayerMediaId > 0) {
+            // Play was pressed on a rail, not on this detail screen: the screen
+            // the viewer was looking at stays behind the player.
+            m_playerMediaId = m_detailId;
+            m_pendingPlayerMediaId = 0;
+            m_player->open(m_detailId, m_detail);
+            setScreen(Player);
+            return;
+        }
+        m_pendingPlayerMediaId = 0;
+        setScreen(Detail);
     });
     connect(m_api, &ApiClient::categoriesLoaded, this,
             [this](const QJsonObject &payload) {
@@ -305,12 +316,23 @@ void AppController::loadFilterOptions()
 
 void AppController::openPlayer(int mediaId)
 {
-    m_playerMediaId = mediaId;
-    setScreen(Player);
+    // From a rail the controller only has an id, so the full record is fetched
+    // first: the player needs the stored position to resume, and a resume from
+    // zero is the bug that makes "continue watching" lie.
+    if (m_detailId == mediaId && !m_detail.isEmpty()) {
+        m_playerMediaId = mediaId;
+        m_player->open(mediaId, m_detail);
+        setScreen(Player);
+        return;
+    }
+    m_pendingPlayerMediaId = mediaId;
+    setBusy(true);
+    m_api->loadMedia(mediaId);
 }
 
 void AppController::closePlayer()
 {
+    m_player->close();
     m_playerMediaId = 0;
     // Back to whatever opened the player, which is almost always the detail
     // screen -- the player is a layer over it, not a destination.

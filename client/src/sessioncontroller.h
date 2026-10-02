@@ -1,5 +1,7 @@
 #pragma once
 
+#include <QtQml/qqmlregistration.h>
+
 #include <QObject>
 #include <QJsonArray>
 #include <QJsonObject>
@@ -32,6 +34,8 @@ class CredentialStore;
 class SessionController : public QObject
 {
     Q_OBJECT
+    QML_ELEMENT
+    QML_UNCREATABLE("Provided by main(); not constructible from QML.")
     Q_PROPERTY(State state READ state NOTIFY stateChanged)
     Q_PROPERTY(QString serverUrl READ serverUrl NOTIFY stateChanged)
     Q_PROPERTY(QString username READ username NOTIFY stateChanged)

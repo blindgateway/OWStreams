@@ -23,6 +23,7 @@ private slots:
     void openDetailFetchesBeforeItShows();
     void backFromDetailReturnsToWhereItCameFrom();
     void thePlayerIsALayerOverTheDetailScreen();
+    void backFromThePlayerReturnsToTheRailThatOpenedIt();
     void backFromThePlayerDoesNotGoToItself();
     void anEmptyQueryDoesNotReachTheServer();
     void searchClearsWhenTheQueryIsEmptied();
@@ -105,24 +106,57 @@ void AppControllerTest::backFromDetailReturnsToWhereItCameFrom()
 void AppControllerTest::thePlayerIsALayerOverTheDetailScreen()
 {
     m_controller->goLibrary();
+    // Play from a rail with only an id to hand: the controller has to fetch
+    // the record before the player can resume, so the screen does not change
+    // yet.  Against no server it never will -- which is the point.
+    m_controller->openPlayer(42);
+    QVERIFY(m_controller->isBusy());
+    QCOMPARE(m_controller->screen(), AppController::Library);
+
+    // With the record in hand -- which is the state the detail screen leaves it
+    // in -- the player opens over whatever screen the viewer was on.
+    m_controller->setDetailForTest(42, {{QStringLiteral("title"), QStringLiteral("Dune")}});
+    QCOMPARE(m_controller->screen(), AppController::Detail);
+
     m_controller->openPlayer(42);
     QCOMPARE(m_controller->screen(), AppController::Player);
     QCOMPARE(m_controller->playerMediaId(), 42);
+    QCOMPARE(m_controller->player()->mediaId(), 42);
 
     m_controller->closePlayer();
-    // Back to the rail, not to the detail screen -- the player is a layer
-    // over whatever opened it, not a destination of its own.
-    QCOMPARE(m_controller->screen(), AppController::Library);
+    // Back to the detail screen, because that is what opened the player: the
+    // viewer pressed Play on a title's page and expects to still be on it.
+    QCOMPARE(m_controller->screen(), AppController::Detail);
     QCOMPARE(m_controller->playerMediaId(), 0);
+    QCOMPARE(m_controller->player()->state(), PlaybackController::Idle);
+}
+
+void AppControllerTest::backFromThePlayerReturnsToTheRailThatOpenedIt()
+{
+    // Opened from a rail rather than from a detail screen -- the other half of
+    // the same rule.
+    m_controller->goLibrary();
+    m_controller->openDetail(42);
+    m_controller->setScreenForTest(AppController::Library);
+    m_controller->setDetailForTest(42, {{QStringLiteral("title"), QStringLiteral("Dune")}});
+    m_controller->setScreenForTest(AppController::Library);
+
+    m_controller->openPlayer(42);
+    QCOMPARE(m_controller->screen(), AppController::Player);
+    m_controller->back();
+    QCOMPARE(m_controller->screen(), AppController::Library);
 }
 
 void AppControllerTest::backFromThePlayerDoesNotGoToItself()
 {
     m_controller->goHome();
+    m_controller->setDetailForTest(7, {{QStringLiteral("title"), QStringLiteral("Solaris")}});
+    m_controller->goHome();
     m_controller->openPlayer(7);
+    QCOMPARE(m_controller->screen(), AppController::Player);
+
     m_controller->back();
-    // The player was opened from Home, so Home is the answer -- but never the
-    // player itself, which would be a screen with no way out.
+    // Never the player itself, which would be a screen with no way out.
     QVERIFY(m_controller->screen() != AppController::Player);
     QCOMPARE(m_controller->screen(), AppController::Home);
     QCOMPARE(m_controller->playerMediaId(), 0);

@@ -1,54 +1,46 @@
 #include "playbackcontroller.h"
 
 #include <QAudioOutput>
-#include <QMetaEnum>
 #include <QMediaMetaData>
 #include <QMediaPlayer>
 #include <QMediaTimeRange>
 #include <QTimer>
+#include <QVideoSink>
 
 #include "apiclient.h"
 #include "apierror.h"
 
 namespace {
 
-constexpr double kVolumeStep = 0.05;
-constexpr qint64 kSeekStepMs = 10 * 1000;
-
 /// Seconds, for the API, from a millisecond position.
 ///
-/// Rounded rather than truncated: a truncated position is up to a second
-/// *behind* where the viewer is, and "continue watching" that starts a second
-/// early every time is the kind of thing that makes a resume feel wrong.
+/// Divided rather than truncated on purpose: a truncated position is up to a
+/// second *behind* where the viewer is, and "continue watching" that starts a
+/// second early every time is exactly the sort of thing that makes a resume
+/// feel subtly wrong.
 double secondsFromMs(qint64 ms)
 {
     return double(ms) / 1000.0;
 }
 
-/// The name to show for a track, when the container gave us one.
+/// The name to show for one track.
 ///
-/// A matroska file names its tracks; an MPEG-TS does not, and there is nothing
-/// to invent but the ordinal.  `QMediaMetaData::stringValue` is the accessor
-/// for whatever the backend managed to parse, and it is safe on a metadata
-/// entry with nothing in it.
+/// This Qt has no `QMediaPlayer::audioTrackType`: the track lists are lists of
+/// `QMediaMetaData` holding whatever the demuxer managed to parse.  A matroska
+/// file tags its tracks with a language; an MPEG-TS does not, and then there
+/// is nothing to invent but the ordinal.  The language is what a picker
+/// actually shows -- "English", "Commentary" -- so it is preferred over the
+/// container's own title, and the ordinal is the last resort rather than the
+/// first, which is the order that produces useful labels on the formats people
+/// actually have.
 QString trackName(const QMediaMetaData &meta, int index)
 {
-    const QString named = meta.stringValue(QMediaMetaData::Title).trimmed();
-    if (!named.isEmpty())
-        return named;
-
-    // Two pass: the language tag is what a picker actually shows ("English",
-    // "Commentary"), so it wins over the ordinal, and the two are combined when
-    // both exist rather than one replacing the other.
     const QString language = meta.stringValue(QMediaMetaData::Language).trimmed();
-    const QString kind = meta.stringValue(QMediaMetaData::Genre).trimmed();
-    if (!language.isEmpty() && !kind.isEmpty() && language != kind)
-        return language + QLatin1String(" · ") + kind;
     if (!language.isEmpty())
         return language;
-    if (!kind.isEmpty())
-        return kind;
-
+    const QString titled = meta.stringValue(QMediaMetaData::Title).trimmed();
+    if (!titled.isEmpty())
+        return titled;
     return QObject::tr("Track %1").arg(index + 1);
 }
 
@@ -61,8 +53,12 @@ QString trackName(const QMediaMetaData &meta, int index)
 PlaybackController::PlaybackController(ApiClient *api, QObject *parent)
     : PlaybackController(api, new QMediaPlayer(), new QAudioOutput(), parent)
 {
+    // Parented here rather than left to the base constructor: an audio output
+    // that outlives the controller is a device still being written to after
+    // the screen that owned it has gone.
+    m_player->setParent(this);
+    m_audioOutput->setParent(this);
     m_player->setAudioOutput(m_audioOutput);
-    setVideoOutput(nullptr);
 }
 
 PlaybackController::PlaybackController(ApiClient *api, QMediaPlayer *player,
@@ -71,33 +67,14 @@ PlaybackController::PlaybackController(ApiClient *api, QMediaPlayer *player,
       m_api(api),
       m_controlsTimer(new QTimer(this))
 {
-    adopt(player, audioOutput);
-    connectPlayer();
-
-    // Three seconds of no input and the controls go away -- but only while
-    // something is actually playing.  Hiding them during a stall, or before
-    // the first frame, is how a player ends up looking broken when it is
-    // loading.
-    m_controlsTimer->setSingleShot(true);
-    m_controlsTimer->setInterval(kControlsHideDelayMs);
-    connect(m_controlsTimer, &QTimer::timeout, this,
-            &PlaybackController::onControlsTimeout);
-}
-
-PlaybackController::~PlaybackController() = default;
-
-void PlaybackController::adopt(QMediaPlayer *player, QAudioOutput *audioOutput)
-{
+    // Adopted, not owned: a test makes these and destroys them.
     m_player = player;
     m_audioOutput = audioOutput;
     if (m_audioOutput) {
         m_audioOutput->setVolume(float(m_volume));
         m_audioOutput->setMuted(m_muted);
     }
-}
 
-void PlaybackController::connectPlayer()
-{
     if (m_player) {
         connect(m_player, &QMediaPlayer::mediaStatusChanged,
                 this, &PlaybackController::onMediaStatusChanged);
@@ -111,60 +88,73 @@ void PlaybackController::connectPlayer()
                 this, &PlaybackController::onSeekableChanged);
         connect(m_player, &QMediaPlayer::bufferProgressChanged,
                 this, [this](float) { refreshBufferedDuration(); });
-        connect(m_player, &QMediaPlayer::errorOccurred,
-                this, [this](QMediaPlayer::Error, const QString &) { onPlayerError(); });
+        connect(m_player, &QMediaPlayer::errorOccurred, this,
+                [this](QMediaPlayer::Error, const QString &) { onPlayerError(); });
         connect(m_player, &QMediaPlayer::tracksChanged,
                 this, &PlaybackController::onTracksChanged);
         connect(m_player, &QMediaPlayer::activeTracksChanged,
                 this, &PlaybackController::onActiveTracksChanged);
 
-        // A backend is free to report a rate other than 1.0 (a remembered
-        // preference, a platform hint); "play at normal speed" is what the
-        // pause button means, so it is stated rather than inherited.
+        // A backend may report a rate other than 1.0 -- a remembered
+        // preference, a platform hint.  The pause button means "normal speed",
+        // so the rate is stated here rather than inherited.
         m_player->setPlaybackRate(1.0);
     }
 
     if (m_api) {
         connect(m_api, &ApiClient::playbackStarted,
                 this, &PlaybackController::onPlaybackStarted);
-        // Every API failure is funnelled through one signal, tagged with the
-        // operation.  Only `playback.start` is fatal to the player: a failed
-        // progress report is a lost position, not a lost film, and treating it
-        // as an error would tear down a working screen over one dropped PUT.
-        connect(m_api, &ApiClient::failed, this, [this](const QString &operation,
-                                                       const ApiError &error) {
-            if (operation != QLatin1String("playback.start"))
-                return;
-            if (error.kind == ApiErrorKind::Gone) {
-                // 410 is not "something went wrong": the server has already
-                // recorded that this title's file is not there.  Saying so is
-                // the difference between a person re-scanning the library and
-                // a person filing a bug.
-                setErrorMessage(error.message.isEmpty()
-                                    ? tr("This title's file is missing from the server.")
-                                    : error.message);
-            } else if (!error.message.isEmpty()) {
-                setErrorMessage(error.message);
-            } else {
-                setErrorMessage(tr("The server could not start this title."));
-            }
-            setState(Error);
-            emit errorOccurred(m_errorMessage);
-        });
+        // Every API failure is funnelled through one signal tagged with the
+        // operation.  Only `playback.start` is fatal to the player: a dropped
+        // progress report loses one position, and treating that as an error
+        // would tear down a film that is playing perfectly well over it.
+        connect(m_api, &ApiClient::failed, this,
+                [this](const QString &operation, const ApiError &error) {
+                    if (operation != QLatin1String("playback.start"))
+                        return;
+                    if (error.kind == ApiErrorKind::Gone) {
+                        // 410 is not "something went wrong".  The server has
+                        // already recorded that this title's file is not there,
+                        // so the message says so: it is the difference between
+                        // a person re-scanning their library and a person
+                        // filing a bug.
+                        failWith(error.message.isEmpty()
+                                     ? tr("This title's file is missing from the server.")
+                                     : error.message);
+                        return;
+                    }
+                    if (!error.message.isEmpty()) {
+                        failWith(error.message);
+                        return;
+                    }
+                    failWith(tr("The server could not start this title."));
+                });
     }
+
+    // Three seconds of no input and the controls go away -- but only while
+    // something is actually playing.  Hiding them during a stall, or before
+    // the first frame, is how a player ends up looking broken while loading.
+    m_controlsTimer->setSingleShot(true);
+    m_controlsTimer->setInterval(kControlsHideDelayMs);
+    connect(m_controlsTimer, &QTimer::timeout, this,
+            &PlaybackController::onControlsTimeout);
 }
 
-void PlaybackController::setVideoOutput(QObject *item)
+PlaybackController::~PlaybackController() = default;
+
+void PlaybackController::setVideoOutput(QVideoSink *sink)
 {
-    if (m_videoOutput == item)
+    if (m_videoOutput == sink)
         return;
-    // Detach before dropping the reference: a `VideoOutput` destroyed while
-    // still attached leaves the backend holding a dangling sink.
+    // Detach before dropping the reference.  A sink destroyed while still
+    // attached leaves the backend writing frames into freed memory, and the
+    // QML side destroys the item -- and with it the sink -- first when a
+    // Loader swaps the screen out.
     if (m_player && m_videoOutput)
-        m_player->setVideoOutput(nullptr);
-    m_videoOutput = item;
+        m_player->setVideoSink(nullptr);
+    m_videoOutput = sink;
     if (m_player && m_videoOutput)
-        m_player->setVideoOutput(m_videoOutput);
+        m_player->setVideoSink(m_videoOutput);
 }
 
 // ---------------------------------------------------------------------------
@@ -173,6 +163,9 @@ void PlaybackController::setVideoOutput(QObject *item)
 
 void PlaybackController::open(int mediaId, const QVariantMap &media)
 {
+    // Opening a title is also closing the previous one, through the same path:
+    // the old session gets finished and its position recorded before a new
+    // token is minted, rather than whenever the caller remembered to do it.
     close();
 
     if (m_mediaId != mediaId) {
@@ -185,35 +178,33 @@ void PlaybackController::open(int mediaId, const QVariantMap &media)
         emit titleChanged();
     }
 
-    // The poster is the same authenticated artwork route every rail uses, and
-    // `Image` reaches it with no token of its own, so the URL is assembled here
-    // from what the API already knows rather than being passed down as state.
-    const QVariant posterKey = media.value(QStringLiteral("poster_key"));
-    QString newPoster;
-    if (m_api && !posterKey.toString().isEmpty()) {
-        newPoster = m_api->baseUrl() + QStringLiteral("/api/v1/media/")
-                    + QString::number(mediaId) + QStringLiteral("/poster");
-    }
+    // The same authenticated artwork route every rail uses.  `artworkUrl` is
+    // the one place that route's shape is written down, and it answers empty
+    // for a title with no poster key -- so the `Image` is never pointed at a
+    // URL that is guaranteed to 404 while the film loads.
+    const bool hasPoster =
+        !media.value(QStringLiteral("poster_key")).toString().isEmpty();
+    const QString newPoster = m_api
+        ? m_api->artworkUrl(mediaId, QStringLiteral("poster"), hasPoster).toString()
+        : QString();
     if (m_posterUrl != newPoster) {
         m_posterUrl = newPoster;
         emit posterUrlChanged();
     }
 
-    // Resume is the server's decision as much as ours: it also honours the
-    // offset we send, but sending the stored position means the server's
-    // history row and this player agree on where the film starts even if the
-    // client was closed while the film was paused somewhere unusual.
+    // Resume is the server's decision as much as ours: it honours the offset
+    // that is sent, but sending the stored position keeps the server's history
+    // row and this player agreeing on where the film starts even when the
+    // client was closed with the film paused somewhere unusual.
     double resumeSeconds = 0.0;
     const QVariant progress = media.value(QStringLiteral("progress"));
     if (progress.canConvert<QVariantMap>()) {
-        const QVariantMap progressMap = progress.toMap();
-        const QVariant stored = progressMap.value(QStringLiteral("position_seconds"));
+        const QVariant stored =
+            progress.toMap().value(QStringLiteral("position_seconds"));
         if (stored.isValid())
             resumeSeconds = stored.toDouble();
     }
 
-    m_hasReported = false;
-    m_lastReportedPosition = 0;
     setState(Preparing);
     if (m_api)
         m_api->startPlayback(mediaId, resumeSeconds);
@@ -223,27 +214,26 @@ void PlaybackController::onPlaybackStarted(int mediaId, const QString &streamUrl
                                            double startOffset, int expiresInSeconds)
 {
     // A token for a title the player has since left behind is stale news: the
-    // screen will not be showing it, and opening it would start audio nobody
-    // asked for.
+    // screen is not showing it, and honouring it would start audio in a room
+    // nobody asked for.
     if (mediaId != m_mediaId)
         return;
     Q_UNUSED(expiresInSeconds)
 
     const QUrl url(streamUrl);
-    if (!url.isValid() || url.isEmpty()) {
-        setErrorMessage(tr("The server did not return a playable source."));
-        setState(Error);
-        emit errorOccurred(m_errorMessage);
+    if (url.isEmpty()) {
+        failWith(tr("The server did not return a playable source."));
         return;
     }
 
     m_source = url;
     emit sourceChanged();
 
-    // Seek *before* play.  `setPosition` on a source that has not been opened
-    // yet is a no-op in every backend, which is exactly what happens if the
-    // seek follows the play; `onDurationChanged` applies it again once the
-    // backend knows how long the file is.
+    // The resume seek is *remembered*, not applied.  `setPosition` into a
+    // source the backend has not opened yet is ignored by every backend there
+    // is, and `onDurationChanged` applies it the moment the file's length is
+    // known.  Seeking here instead would resume at zero, which is the bug this
+    // ordering exists to prevent.
     m_pendingSeekMs = qint64(startOffset * 1000.0);
     if (m_pendingSeekMs < 0)
         m_pendingSeekMs = 0;
@@ -267,6 +257,10 @@ void PlaybackController::applyPendingSeek()
         m_position = target;
         emit positionChanged();
     }
+    // The progress clock runs from the resume point, not from zero.  Fifteen
+    // seconds of *watching* is the interval, and the part of the film watched
+    // before this session began is not part of it.
+    m_lastReportedPosition = target;
 }
 
 // ---------------------------------------------------------------------------
@@ -277,6 +271,10 @@ void PlaybackController::play()
 {
     if (!m_player)
         return;
+    // Refusing to play out of an error state is what makes the screen's retry
+    // button the only way back: a second `play()` over a broken source would
+    // put the player into a state where the picture is frozen and the state
+    // says "playing".
     if (m_state == Error)
         return;
     m_player->play();
@@ -286,9 +284,9 @@ void PlaybackController::pause()
 {
     if (!m_player)
         return;
-    // The flush happens *before* the pause so the reported position is the one
-    // the viewer can still see on the screen, rather than whatever the backend
-    // lands on a few milliseconds later.
+    // Flushed before the pause, not after: what gets reported should be the
+    // position still visible on the screen, not wherever the backend lands a
+    // few milliseconds later.
     if (m_isPlaying || m_state == Playing || m_state == Buffering)
         flushProgress(false);
     m_player->pause();
@@ -297,17 +295,16 @@ void PlaybackController::pause()
 void PlaybackController::togglePlay()
 {
     if (!m_player) {
-        // Still a valid transition: with no backend the state machine is the
-        // whole of the behaviour, and a test that drives `togglePlay()` twice
-        // must see it return to where it started rather than crash.
+        // With no backend the state machine *is* the behaviour, and a test that
+        // calls `togglePlay()` twice must see it return to where it started
+        // rather than crash on a null pointer.
         setState(m_state == Playing ? Paused : Playing);
         return;
     }
-    if (m_isPlaying || m_state == Playing) {
+    if (m_isPlaying || m_state == Playing || m_state == Buffering)
         pause();
-    } else {
+    else
         play();
-    }
 }
 
 void PlaybackController::stop()
@@ -322,26 +319,54 @@ void PlaybackController::stop()
 
 void PlaybackController::close()
 {
-    // Ordered deliberately: the position is read from the backend *before* it
-    // is stopped, because stopping rewinds it.  A close that reports zero is a
-    // close that erases the viewer's history.
+    // Deliberately first, and deliberately *before* the player is stopped:
+    // stopping rewinds the backend, so a close that stopped first would report
+    // position zero and erase the viewer's history.
+    // Only a real session gets closed.  `open()` calls this first, and
+    // closing a title that never started would tell the server somebody
+    // watched nothing at position zero.
+    const bool hadSession = !m_source.isEmpty();
     flushProgress(true);
+    if (hadSession)
+        emit playbackSessionClosed();
+
     if (m_player) {
         m_player->stop();
-        m_player->setSource({});
+        m_player->setSource(QUrl());
     }
-    setState(Idle);
+
+    m_pendingSeekMs = -1;
+    m_lastReportedPosition = 0;
     if (!m_source.isEmpty()) {
         m_source = QUrl();
         emit sourceChanged();
     }
-    m_position = 0;
-    m_duration = 0;
-    m_bufferedDuration = 0;
-    m_pendingSeekMs = -1;
-    m_seekable = false;
-    m_isPlaying = false;
+    if (m_position != 0) {
+        m_position = 0;
+        emit positionChanged();
+    }
+    if (m_duration != 0) {
+        m_duration = 0;
+        emit durationChanged();
+    }
+    if (m_bufferedDuration != 0) {
+        m_bufferedDuration = 0;
+        emit bufferedDurationChanged();
+    }
+    if (m_seekable) {
+        m_seekable = false;
+        emit seekableChanged();
+    }
+    if (m_isPlaying) {
+        m_isPlaying = false;
+        emit isPlayingChanged();
+    }
+    if (!m_errorMessage.isEmpty()) {
+        m_errorMessage.clear();
+        emit errorMessageChanged();
+    }
     setControlsVisible(true);
+    setState(Idle);
 }
 
 void PlaybackController::requestNext()
@@ -360,17 +385,23 @@ void PlaybackController::requestPrevious()
 
 void PlaybackController::seek(qint64 positionMs)
 {
+    // Clamped rather than trusted.  A scrubber can be dragged past the end and
+    // a relative seek can run off either side; a backend handed a position
+    // outside the file either clamps it itself -- slowly, having already shown
+    // the wrong time -- or refuses the seek outright.
     if (positionMs < 0)
         positionMs = 0;
     if (m_duration > 0 && positionMs > m_duration)
         positionMs = m_duration;
 
-    m_position = positionMs;
-    emit positionChanged();
+    if (m_position != positionMs) {
+        m_position = positionMs;
+        emit positionChanged();
+    }
 
     // A seek is a statement about where the viewer is now, so it counts as
-    // progress: someone who skips forward for ten minutes and then closes the
-    // app should not resume from where they started watching.
+    // progress: someone who skips forward ten minutes and then closes the app
+    // should not come back to where they started watching.
     maybeReportProgress();
 
     if (m_player && m_seekable)
@@ -392,16 +423,18 @@ void PlaybackController::setVolume(double value)
         value = 0.0;
     if (value > 1.0)
         value = 1.0;
-    if (qFuzzyCompare(m_volume, value))
+    if (m_volume == value)
         return;
     m_volume = value;
     if (m_audioOutput)
         m_audioOutput->setVolume(float(value));
     emit volumeChanged();
 
-    // Dragging a volume slider to zero is a mute, and leaving it there while
-    // the unmuted icon shows means the picture and the state disagree.  Coming
-    // back off zero does not unmute: that is what the mute toggle is for.
+    // Turning the volume up off zero is unmute, and leaving it muted while the
+    // slider reads 60% means the picture and the state disagree about whether
+    // there is sound.  The other direction does *not* unmute: dragging to zero
+    // and back up is a thing people do on purpose, and a player that un-mutes
+    // itself there is a player that surprises you.
     if (value > 0.0 && m_muted)
         setMuted(false);
 }
@@ -427,34 +460,34 @@ void PlaybackController::toggleMuted()
 
 void PlaybackController::onTracksChanged()
 {
-    QStringList audio;
-    QStringList subtitles;
+    QStringList audioNames;
+    QStringList subtitleNames;
     if (m_player) {
         const QList<QMediaMetaData> audioTracks = m_player->audioTracks();
         for (int i = 0; i < audioTracks.size(); ++i)
-            audio << trackName(audioTracks.at(i), i);
+            audioNames << trackName(audioTracks.at(i), i);
         const QList<QMediaMetaData> subtitleTracks = m_player->subtitleTracks();
         for (int i = 0; i < subtitleTracks.size(); ++i)
-            subtitles << trackName(subtitleTracks.at(i), i);
+            subtitleNames << trackName(subtitleTracks.at(i), i);
     }
-    m_audioTrackNames = audio;
-    m_subtitleTrackNames = subtitles;
+    m_audioTrackNames = audioNames;
+    m_subtitleTrackNames = subtitleNames;
 
-    // The backend tells us which track it chose; when it did not (a format that
-    // carries one implicit track), the first one is what is playing and saying
-    // "off" would be a lie.
     if (m_player) {
-        const int activeAudio = m_player->activeAudioTrack();
-        m_audioTrackIndex = activeAudio >= 0 ? activeAudio : (audio.isEmpty() ? -1 : 0);
-        const int activeSubtitle = m_player->activeSubtitleTrack();
-        m_subtitleTrackIndex = activeSubtitle;
+        m_audioTrackIndex = m_player->activeAudioTrack();
+        m_subtitleTrackIndex = m_player->activeSubtitleTrack();
     } else {
-        m_audioTrackIndex = audio.isEmpty() ? -1 : 0;
+        m_audioTrackIndex = -1;
         m_subtitleTrackIndex = -1;
     }
+    // A backend that reports one implicit track and no active index is playing
+    // track zero, and a picker that says "off" while audio comes out of it is
+    // worse than no picker at all.
+    if (m_audioTrackIndex < 0 && !audioNames.isEmpty())
+        m_audioTrackIndex = 0;
+
     emit tracksChanged();
     emit audioTrackIndexChanged();
-    emit subtitleTrackIndexChanged();
     emit subtitleEnabledChanged();
 }
 
@@ -471,19 +504,18 @@ void PlaybackController::onActiveTracksChanged()
     if (m_subtitleTrackIndex != subtitles) {
         m_subtitleTrackIndex = subtitles;
         emit subtitleEnabledChanged();
-        emit subtitleTrackIndexChanged();
     }
 }
 
 void PlaybackController::setAudioTrack(int index)
 {
-    if (m_audioTrackNames.isEmpty())
-        return;
+    // An out-of-range index is recorded rather than applied.  Ignoring it
+    // silently would leave the picker showing a selection that is not playing,
+    // which is the specific failure this avoids.
     if (index < 0 || index >= m_audioTrackNames.size()) {
         if (m_audioTrackIndex != index) {
             m_audioTrackIndex = index;
             emit audioTrackIndexChanged();
-            emit subtitleTrackIndexChanged();
         }
         return;
     }
@@ -506,9 +538,9 @@ void PlaybackController::cycleAudioTrack()
 
 void PlaybackController::toggleSubtitles()
 {
-    // Off -> first -> ... -> off.  `subtitleTrackIndex` of -1 *is* "off", so
-    // the cycle is the whole truth about subtitles and there is no second
-    // boolean that can disagree with it.
+    // Off -> first -> second -> ... -> off.  A `subtitleTrackIndex` of -1 *is*
+    // "off", so there is no second boolean that can disagree with it -- which
+    // is what lets `subtitleEnabled` be derived rather than stored.
     if (m_subtitleTrackNames.isEmpty())
         return;
     if (m_subtitleTrackIndex < 0)
@@ -538,7 +570,6 @@ void PlaybackController::setSubtitleTrack(int index)
     if (m_subtitleTrackIndex != index) {
         m_subtitleTrackIndex = index;
         emit subtitleEnabledChanged();
-        emit subtitleTrackIndexChanged();
     }
     emit tracksChanged();
 }
@@ -549,15 +580,17 @@ void PlaybackController::setSubtitleTrack(int index)
 
 void PlaybackController::maybeReportProgress()
 {
-    // Never report with nothing loaded: a position of zero for a title that
-    // has not opened writes a zero into the server's history row and marks
-    // nothing watched, which is worse than reporting nothing at all.
-    if (m_mediaId == 0 || m_source.isEmpty())
+    // Never with nothing loaded.  A position for a title that has not opened
+    // writes a zero into the server's history row, and a zero that arrives
+    // after a real session has already ended would be worse than sending
+    // nothing at all.
+    if (m_api == nullptr || m_mediaId == 0 || m_source.isEmpty())
         return;
-    if (!m_hasReported) {
-        flushProgress(false);
-        return;
-    }
+    // Measured in *playback position*, not wall clock.  A player left paused in
+    // the background for an hour has not watched an hour and must not spend
+    // fifteen-second intervals saying so; a film at 1.5x reaches the interval
+    // in ten seconds of real time and reports more often, which is the correct
+    // reading of the cost.
     if (m_position - m_lastReportedPosition < kProgressReportIntervalMs)
         return;
     flushProgress(false);
@@ -565,12 +598,11 @@ void PlaybackController::maybeReportProgress()
 
 void PlaybackController::flushProgress(bool complete)
 {
-    if (!m_api || m_mediaId == 0 || m_source.isEmpty())
+    if (m_api == nullptr || m_mediaId == 0 || m_source.isEmpty())
         return;
 
     const qint64 position = m_position;
     m_lastReportedPosition = position;
-    m_hasReported = true;
     if (complete)
         m_api->finishPlayback(m_mediaId, secondsFromMs(position));
     else
@@ -589,8 +621,8 @@ void PlaybackController::onPositionChanged(qint64 position)
         return;
     m_position = position;
     emit positionChanged();
-    // Throttled by the interval, not called unconditionally: this is the one
-    // signal that fires sixty times a second.
+    // This is the signal that fires sixty times a second; the interval test
+    // inside is what keeps that from being sixty requests a second.
     maybeReportProgress();
 }
 
@@ -600,10 +632,8 @@ void PlaybackController::onDurationChanged(qint64 duration)
         return;
     m_duration = duration;
     emit durationChanged();
-    // The resume seek is applied here rather than at `setSource` time,
-    // because a backend ignores a seek into a source whose length it does not
-    // know yet, and resuming at zero because the seek was too early is exactly
-    // the bug this ordering exists to prevent.
+    // Applied here rather than at `setSource` time: a backend cannot seek into
+    // a source whose length it has not reported yet.
     applyPendingSeek();
 }
 
@@ -625,11 +655,9 @@ void PlaybackController::onPlaybackStateChanged()
         emit isPlayingChanged();
     }
     if (playing) {
-        setControlsVisible(true);
         setState(Playing);
     } else if (m_player->playbackState() == QMediaPlayer::PausedState) {
         setState(Paused);
-        setControlsVisible(true);
     } else if (m_player->playbackState() == QMediaPlayer::StoppedState
                && m_state != Error) {
         setState(Stopped);
@@ -648,15 +676,17 @@ void PlaybackController::onMediaStatusChanged()
     case QMediaPlayer::StalledMedia:
         // A stall is buffering, not an error.  The screen shows a spinner for
         // one and a message with a retry button for the other, and treating a
-        // two-second underrun as a failure would tear down a film that is
-        // about to carry on playing.
+        // two-second underrun as a failure would tear down a film that was
+        // about to carry on playing by itself.
         setState(Buffering);
         break;
     case QMediaPlayer::LoadedMedia:
     case QMediaPlayer::BufferedMedia:
-        if (m_state == Error)
-            break;
-        setState(m_isPlaying ? Playing : (m_position > 0 ? Paused : Buffering));
+        // An error outranks a loaded source: a backend that says the media is
+        // fine *and* that it could not be played is reporting the error later,
+        // not earlier.
+        if (m_state != Error)
+            setState(m_isPlaying ? Playing : (m_position > 0 ? Paused : Buffering));
         break;
     case QMediaPlayer::EndOfMedia:
         flushProgress(true);
@@ -675,8 +705,11 @@ void PlaybackController::refreshBufferedDuration()
 {
     if (!m_player)
         return;
-    const QMediaTimeRange range = m_player->bufferedTimeRange();
-    const qint64 buffered = range.latestTime() * 1000;
+    // `QMediaTimeRange` is in the same unit as `position()` -- milliseconds.
+    // Multiplying by 1000 here made a buffered range that started at one second
+    // read as sixteen minutes, so the scrubber drew a buffer bar that ran past
+    // the end of the film.
+    const qint64 buffered = m_player->bufferedTimeRange().latestTime();
     if (m_bufferedDuration == buffered)
         return;
     m_bufferedDuration = buffered;
@@ -687,14 +720,14 @@ void PlaybackController::onPlayerError()
 {
     if (!m_player)
         return;
-    const QString backendMessage = m_player->errorString();
-    QString message = backendMessage;
+    // The backend's own string first, because it is specific ("HTTP 410") and
+    // the fallbacks below are for the cases where it said nothing at all.
+    // They are chosen per error enum rather than being one string, because
+    // "media error" is not something a person can act on.
+    QString message = m_player->errorString();
     if (message.isEmpty()) {
         switch (m_player->error()) {
         case QMediaPlayer::ResourceError:
-            // Either the backend cannot reach the server any more, or the file
-            // went missing under it; both are worth naming as a connection
-            // problem rather than "media error".
             message = tr("The stream stopped. Check the connection and try again.");
             break;
         case QMediaPlayer::FormatError:
@@ -711,6 +744,11 @@ void PlaybackController::onPlayerError()
             break;
         }
     }
+    failWith(message);
+}
+
+void PlaybackController::failWith(const QString &message)
+{
     setErrorMessage(message);
     setState(Error);
     emit errorOccurred(message);
@@ -722,11 +760,12 @@ void PlaybackController::setState(State state)
         return;
     m_state = state;
     emit stateChanged();
-    if (state == Playing)
+    if (state == Playing) {
         armControlsTimer();
-    else if (state != Buffering && state != Preparing) {
+    } else if (state != Buffering && state != Preparing) {
         // Anything that is not playing and not waiting on the network puts the
-        // controls back: they are what the viewer needs to fix it.
+        // controls back, because they are what a viewer needs in order to fix
+        // whatever just happened.
         m_controlsTimer->stop();
         setControlsVisible(true);
     }
@@ -750,16 +789,19 @@ void PlaybackController::setControlsVisible(bool visible)
         return;
     m_controlsVisible = visible;
     emit controlsVisibleChanged();
+    // Bringing them back restarts the clock, so "no input for three seconds"
+    // is measured from the last time they were asked for rather than from
+    // whenever the previous hide happened to land.
     if (visible)
         armControlsTimer();
 }
 
 void PlaybackController::armControlsTimer()
 {
-    // Only ever armed while something is playing.  `setControlsVisible(true)`
-    // from a paused player therefore leaves the controls up, which is what the
-    // paused screen wants.
-    if (m_state == Playing || m_state == Buffering)
+    // Armed only while something is playing.  A viewer who pauses gets the
+    // controls and keeps them, which is what a paused screen wants: there is
+    // nothing to hide them for.
+    if (m_state == Playing)
         m_controlsTimer->start();
 }
 

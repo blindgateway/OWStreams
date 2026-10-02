@@ -1,5 +1,13 @@
 #pragma once
 
+// QML_ELEMENT and QML_UNCREATABLE rather than the qmlRegister* calls that used
+// to be in main.cpp.  The macros put the class -- its properties, its slots and
+// its enums -- into the module's generated qmltypes, which is what lets qmllint
+// resolve `AppController.Settings` and every `controller.library` in the UI.
+// Runtime registration in main() is invisible to CMake, so the linter saw a
+// module with no types in it and reported every one of them as unknown.
+#include <QtQml/qqmlregistration.h>
+
 #include <QJsonArray>
 #include <QObject>
 #include <QString>
@@ -12,6 +20,7 @@
 // declaration is a static_assert failure, not a compile-time curiosity.
 #include "homescreenmodel.h"
 #include "librarymodel.h"
+#include "playbackcontroller.h"
 
 class ApiClient;
 
@@ -24,6 +33,8 @@ class ApiClient;
 class AppController : public QObject
 {
     Q_OBJECT
+    QML_ELEMENT
+    QML_UNCREATABLE("Provided by main(); not constructible from QML.")
     Q_PROPERTY(Screen screen READ screen NOTIFY screenChanged)
     Q_PROPERTY(HomeScreenModel *home READ home CONSTANT)
     Q_PROPERTY(MediaListModel *library READ library CONSTANT)
@@ -52,10 +63,12 @@ class AppController : public QObject
     /// reads this rather than being handed an id, so a change of title while
     /// it is open cannot leave it pointing at the previous one.
     Q_PROPERTY(int playerMediaId READ playerMediaId NOTIFY screenChanged)
+    Q_PROPERTY(PlaybackController *player READ player CONSTANT)
     /// What the player is showing, or 0 when it is closed.  The player screen
     /// reads this rather than being handed an id, so a change of title while
     /// it is open cannot leave it pointing at the previous one.
     Q_PROPERTY(int playerMediaId READ playerMediaId NOTIFY screenChanged)
+    Q_PROPERTY(PlaybackController *player READ player CONSTANT)
 
 public:
     enum Screen {
@@ -93,6 +106,10 @@ public:
     QString libraryYear() const { return m_libraryYear; }
     int libraryPageSize() const { return kPageSize; }
     int playerMediaId() const { return m_playerMediaId; }
+    /// One player for the life of the app.  Constructed per title would mean a
+    /// new `QMediaPlayer` per poster and a new audio device fight per open, and
+    /// the resume rules -- which live here -- would be re-derived every time.
+    PlaybackController *player() const { return m_player; }
 
 public slots:
     /// Called when a profile is chosen.  Everything the app shows is
@@ -135,6 +152,20 @@ public slots:
     /// needs to assert the *return* path, and that means being able to put the
     /// controller in a screen directly.
     void setScreenForTest(Screen screen) { setScreen(screen); }
+
+    /// Put a media record in place and land on the detail screen, exactly as
+    /// `GET /library/media/{id}` answering does.  Splitting the two would let a
+    /// test reach a state the app cannot: the screen only appears with a
+    /// record, and the player only opens with one.
+    void setDetailForTest(int mediaId, const QVariantMap &media)
+    {
+        m_detail = media;
+        m_detailId = mediaId;
+        m_pendingPlayerMediaId = 0;
+        emit detailChanged();
+        setScreen(Detail);
+        setBusy(false);
+    }
 
 signals:
     void screenChanged();
@@ -180,4 +211,8 @@ private:
     /// the moment the answer lands, and cleared.
     bool m_libraryAppending = false;
     int m_playerMediaId = 0;
+    /// Set when Play was pressed somewhere with only an id to hand; the media
+    /// record has to arrive before the player can resume.
+    int m_pendingPlayerMediaId = 0;
+    PlaybackController *m_player = nullptr;
 };

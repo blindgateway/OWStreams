@@ -22,11 +22,11 @@ Flickable {
     signal backRequested()
     signal playRequested(int mediaId)
 
-    readonly property bool hasMedia: media !== null && media.title !== undefined
-    readonly property var backdropUrl: hasMedia && media.poster_key
-        ? (App.api.baseUrl + "/api/v1/media/" + media.id + "/poster") : ""
+    readonly property bool hasMedia: screen.media !== null && screen.media.title !== undefined
+    readonly property var backdropUrl: hasMedia && screen.media.poster_key
+        ? (App.api.baseUrl + "/api/v1/media/" + screen.media.id + "/poster") : ""
 
-    implicitHeight: content.height
+    implicitHeight: column.implicitHeight
     contentHeight: column.implicitHeight + Theme.spaceHuge * 2
     clip: true
     boundsBehavior: Flickable.StopAtBounds
@@ -62,11 +62,11 @@ Flickable {
 
                 AppButton {
                     weight: "quiet"
-                    text: screen.hasMedia && media.is_favorite ? qsTr("In favourites")
+                    text: screen.hasMedia && screen.media.is_favorite ? qsTr("In favourites")
                                                         : qsTr("Add to favourites")
                     enabled: screen.hasMedia
                     onClicked: if (screen.controller)
-                        screen.controller.toggleFavorite(media.id, !media.is_favorite)
+                        screen.controller.toggleFavorite(screen.media.id, !screen.media.is_favorite)
                 }
 
                 AppButton {
@@ -127,7 +127,7 @@ Flickable {
 
                 Text {
                     Layout.fillWidth: true
-                    text: screen.hasMedia ? media.title : ""
+                    text: screen.hasMedia ? screen.media.title : ""
                     color: Theme.text
                     font.pixelSize: screen.wide ? Theme.typeDisplay : Theme.typeTitle
                     font.family: Theme.family
@@ -137,8 +137,8 @@ Flickable {
 
                 Text {
                     Layout.fillWidth: true
-                    visible: screen.hasMedia && media.original_title
-                    text: screen.hasMedia && media.original_title ? media.original_title : ""
+                    visible: screen.hasMedia && screen.media.original_title
+                    text: screen.hasMedia && screen.media.original_title ? screen.media.original_title : ""
                     color: Theme.textMuted
                     font.pixelSize: Theme.typeBody
                     font.family: Theme.family
@@ -147,8 +147,8 @@ Flickable {
 
                 Text {
                     Layout.fillWidth: true
-                    visible: screen.hasMedia && media.tagline
-                    text: screen.hasMedia && media.tagline ? media.tagline : ""
+                    visible: screen.hasMedia && screen.media.tagline
+                    text: screen.hasMedia && screen.media.tagline ? screen.media.tagline : ""
                     color: Theme.textMuted
                     font.pixelSize: Theme.typeBody
                     font.family: Theme.family
@@ -166,25 +166,25 @@ Flickable {
                     visible: screen.hasMedia
 
                     Text {
-                        text: screen.hasMedia && media.year ? String(media.year) : ""
+                        text: screen.hasMedia && screen.media.year ? String(screen.media.year) : ""
                         color: Theme.textMuted
                         font.pixelSize: Theme.typeCaption
                         font.family: Theme.family
                     }
                     Text {
-                        visible: screen.hasMedia && media.runtime_minutes
-                        text: screen.hasMedia && media.runtime_minutes
-                              ? formatRuntime(media.runtime_minutes) : ""
+                        visible: screen.hasMedia && screen.media.runtime_minutes
+                        text: screen.hasMedia && screen.media.runtime_minutes
+                              ? screen.formatRuntime(screen.media.runtime_minutes) : ""
                         color: Theme.textMuted
                         font.pixelSize: Theme.typeCaption
                         font.family: Theme.family
                     }
                     Text {
-                        visible: screen.hasMedia && media.rating_value
-                        text: screen.hasMedia && media.rating_value
+                        visible: screen.hasMedia && screen.media.rating_value
+                        text: screen.hasMedia && screen.media.rating_value
                               ? qsTr("%1 ★ · %2")
-                                .arg(Number(media.rating_value).toFixed(1))
-                                .arg(media.rating_source ? media.rating_source : "") : ""
+                                .arg(Number(screen.media.rating_value).toFixed(1))
+                                .arg(screen.media.rating_source ? screen.media.rating_source : "") : ""
                         color: Theme.accent
                         font.pixelSize: Theme.typeCaption
                         font.family: Theme.family
@@ -198,18 +198,20 @@ Flickable {
                     visible: screen.hasMedia && genreList.length > 0
 
                     readonly property var genreList: {
-                        if (!screen.hasMedia || !media.genres)
+                        if (!screen.hasMedia || !screen.media.genres)
                             return []
                         const out = []
-                        for (const g of media.genres)
+                        for (const g of screen.media.genres)
                             out.push(typeof g === "string" ? g : g.name)
                         return out
                     }
 
                     Repeater {
+                        id: genreRepeater
                         model: parent.genreList
 
                         delegate: Rectangle {
+                            id: chip
                             required property string modelData
                             width: genreText.implicitWidth + Theme.spaceLg
                             height: 24
@@ -222,7 +224,7 @@ Flickable {
                             Text {
                                 id: genreText
                                 anchors.centerIn: parent
-                                text: modelData
+                                text: chip.modelData
                                 color: Theme.textMuted
                                 font.pixelSize: Theme.typeMicro
                                 font.family: Theme.family
@@ -238,8 +240,8 @@ Flickable {
             Layout.fillWidth: true
             Layout.leftMargin: Responsive.pageMargin
             Layout.rightMargin: Responsive.pageMargin
-            visible: screen.hasMedia && media.overview
-            text: screen.hasMedia && media.overview ? media.overview : ""
+            visible: screen.hasMedia && screen.media.overview
+            text: screen.hasMedia && screen.media.overview ? screen.media.overview : ""
             color: Theme.text
             font.pixelSize: Theme.typeBody
             font.family: Theme.family
@@ -254,7 +256,7 @@ Flickable {
             Layout.rightMargin: Responsive.pageMargin
             visible: screen.hasMedia
             title: qsTr("Cast & crew")
-            entries: screen.hasMedia ? castEntries : []
+            entries: screen.hasMedia ? screen.castEntries : []
         }
 
         // -- the technical record -----------------------------------------
@@ -264,7 +266,7 @@ Flickable {
             Layout.rightMargin: Responsive.pageMargin
             visible: screen.hasMedia
             title: qsTr("File")
-            entries: screen.hasMedia ? fileEntries : []
+            entries: screen.hasMedia ? screen.fileEntries : []
         }
 
         Item { Layout.fillWidth: true; Layout.preferredHeight: Theme.spaceHuge }
@@ -275,11 +277,11 @@ Flickable {
         if (!screen.hasMedia)
             return []
         const out = []
-        if (media.director)
-            for (const d of media.director)
+        if (screen.media.director)
+            for (const d of screen.media.director)
                 out.push({ label: qsTr("Director"), value: typeof d === "string" ? d : d.name })
-        if (media.cast)
-            for (const c of media.cast) {
+        if (screen.media.cast)
+            for (const c of screen.media.cast) {
                 const name = typeof c === "string" ? c : c.name
                 const character = (typeof c === "object" && c.character) ? c.character : ""
                 out.push({ label: qsTr("Cast"), value: character ? name + " · " + character : name })
@@ -295,20 +297,20 @@ Flickable {
             if (value !== undefined && value !== null && String(value).length > 0)
                 out.push({ label: label, value: String(value) })
         }
-        add(qsTr("Container"), media.container)
-        add(qsTr("Video"), media.video_codec
-            ? media.video_codec + " " + media.width + "×" + media.height : "")
-        add(qsTr("Frame rate"), media.frame_rate ? Number(media.frame_rate).toFixed(2) + " fps" : "")
-        add(qsTr("HDR"), media.hdr_format)
-        add(qsTr("Audio"), media.audio_codec
-            ? media.audio_codec + (media.audio_channels ? " · " + media.audio_channels + " ch" : "") : "")
-        add(qsTr("Audio languages"), media.audio_languages)
-        add(qsTr("Subtitles"), media.subtitle_languages)
-        add(qsTr("Size"), media.file_size_bytes ? formatBytes(media.file_size_bytes) : "")
-        add(qsTr("Parental rating"), media.parental_rating)
-        add(qsTr("Released"), media.release_date)
-        add(qsTr("Added"), media.added_at)
-        add(qsTr("Updated"), media.updated_at)
+        add(qsTr("Container"), screen.media.container)
+        add(qsTr("Video"), screen.media.video_codec
+            ? screen.media.video_codec + " " + screen.media.width + "×" + screen.media.height : "")
+        add(qsTr("Frame rate"), screen.media.frame_rate ? Number(screen.media.frame_rate).toFixed(2) + " fps" : "")
+        add(qsTr("HDR"), screen.media.hdr_format)
+        add(qsTr("Audio"), screen.media.audio_codec
+            ? screen.media.audio_codec + (screen.media.audio_channels ? " · " + screen.media.audio_channels + " ch" : "") : "")
+        add(qsTr("Audio languages"), screen.media.audio_languages)
+        add(qsTr("Subtitles"), screen.media.subtitle_languages)
+        add(qsTr("Size"), screen.media.file_size_bytes ? screen.formatBytes(screen.media.file_size_bytes) : "")
+        add(qsTr("Parental rating"), screen.media.parental_rating)
+        add(qsTr("Released"), screen.media.release_date)
+        add(qsTr("Added"), screen.media.added_at)
+        add(qsTr("Updated"), screen.media.updated_at)
         return out
     }
 

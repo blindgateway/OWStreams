@@ -79,6 +79,7 @@ Item {
         ScrollBar.vertical: ScrollBar {}
 
         delegate: Item {
+            id: cell
             width: grid.cellWidth
             height: grid.cellHeight
 
@@ -86,7 +87,7 @@ Item {
             required property int index
 
             readonly property bool isSelected:
-                modelData.id === screen.selectedId
+                cell.modelData.id === screen.selectedId
 
             Rectangle {
                 id: tile
@@ -105,7 +106,7 @@ Item {
                 // gradient and a glow.
                 Text {
                     anchors.centerIn: parent
-                    text: (modelData.name || "?").charAt(0).toUpperCase()
+                    text: (cell.modelData.name || "?").charAt(0).toUpperCase()
                     color: Theme.accent
                     font.pixelSize: 40
                     font.family: Theme.family
@@ -121,7 +122,7 @@ Item {
                     height: 26
                     radius: Theme.radiusMd
                     color: Theme.overlay
-                    visible: modelData.has_pin
+                    visible: cell.modelData.has_pin
 
                     Text {
                         anchors.centerIn: parent
@@ -137,7 +138,7 @@ Item {
                     anchors.fill: parent
                     enabled: !screen.busy
                     cursorShape: Qt.PointingHandCursor
-                    onClicked: screen.choose(modelData)
+                    onClicked: screen.choose(cell.modelData)
                 }
             }
 
@@ -147,7 +148,7 @@ Item {
                 anchors.left: parent.left
                 anchors.right: parent.right
                 horizontalAlignment: Text.AlignHCenter
-                text: modelData.name
+                text: cell.modelData.name
                 color: Theme.text
                 font.pixelSize: Theme.typeCaption
                 font.family: Theme.family
@@ -255,11 +256,11 @@ Item {
                 label: qsTr("Name")
                 maximumLength: 24
                 enabled: !screen.busy
-                onAccepted: pinField.forceActiveFocus()
+                onAccepted: newPinField.forceActiveFocus()
             }
 
             AppTextField {
-                id: pinField
+                id: newPinField
                 Layout.fillWidth: true
                 label: qsTr("PIN (optional)")
                 echoMode: TextInput.Password
@@ -271,7 +272,7 @@ Item {
 
             Text {
                 Layout.fillWidth: true
-                visible: pinField.text.length > 0 && pinField.text.length < 4
+                visible: newPinField.text.length > 0 && newPinField.text.length < 4
                 text: qsTr("A PIN needs at least four digits.")
                 color: Theme.textMuted
                 font.pixelSize: Theme.typeMicro
@@ -353,9 +354,9 @@ Item {
     function confirmCreate() {
         if (nameField.text.trim().length === 0)
             return
-        if (pinField.text.length > 0 && pinField.text.length < 4)
+        if (newPinField.text.length > 0 && newPinField.text.length < 4)
             return
-        screen.createRequested(nameField.text.trim(), pinField.text)
+        screen.createRequested(nameField.text.trim(), newPinField.text)
     }
 
     Component.onCompleted: {

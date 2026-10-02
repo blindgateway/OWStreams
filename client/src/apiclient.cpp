@@ -118,9 +118,9 @@ QUrl ApiClient::streamUrl(int mediaId) const
                 + QString::number(mediaId));
 }
 
-QUrl ApiClient::artworkUrl(int mediaId, const QString &kind) const
+QUrl ApiClient::artworkUrl(int mediaId, const QString &kind, bool hasPosterKey) const
 {
-    if (mediaId <= 0)
+    if (mediaId <= 0 || !hasPosterKey)
         return {};
     // Only the two artwork routes exist.  A caller that invents a third gets
     // an empty URL rather than a 404 the UI has to interpret.
@@ -293,7 +293,14 @@ void ApiClient::handle(QNetworkReply *reply, const Pending &pending)
             m_playbackToken.clear();
             m_playbackSessionId.clear();
             m_playbackMediaId = 0;
-            emit playbackFinished(pending.body.value(QStringLiteral("media_id")).toInt());
+            // The acknowledgement, not the request: nothing else observes a
+            // close, so a caller that did not see it cannot tell one apart from
+            // a player that was simply torn down.
+            emit playbackFinished(FinishedPlayback{
+                pending.body.value(QStringLiteral("media_id")).toInt(),
+                pending.query.queryItemValue(QStringLiteral("position_seconds"),
+                                             QUrl::FullyDecoded).toDouble(),
+                pending.body.value(QStringLiteral("session_id")).toString()});
         } else if (pending.operation == QLatin1String("profiles.list")) {
             // The route answers a bare array.  An earlier version read
             // object["profiles"] and therefore always reported an empty list,

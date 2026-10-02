@@ -1,5 +1,7 @@
 #pragma once
 
+#include <QtQml/qqmlregistration.h>
+
 #include <QAbstractListModel>
 #include <QJsonArray>
 #include <QJsonObject>
@@ -20,6 +22,8 @@
 class MediaListModel : public QAbstractListModel
 {
     Q_OBJECT
+    QML_ELEMENT
+    QML_UNCREATABLE("Provided by AppController; not constructible from QML.")
     Q_PROPERTY(int count READ rowCount NOTIFY countChanged)
     Q_PROPERTY(bool loading READ isLoading WRITE setLoading NOTIFY loadingChanged)
     Q_PROPERTY(bool failed READ isFailed NOTIFY failedChanged)

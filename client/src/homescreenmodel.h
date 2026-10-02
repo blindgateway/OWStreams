@@ -1,5 +1,7 @@
 #pragma once
 
+#include <QtQml/qqmlregistration.h>
+
 #include <QJsonArray>
 #include <QJsonObject>
 #include <QObject>
@@ -18,6 +20,8 @@
 class HomeRail : public QObject
 {
     Q_OBJECT
+    QML_ELEMENT
+    QML_UNCREATABLE("Provided by HomeScreenModel; not constructible from QML.")
     Q_PROPERTY(MediaListModel *model READ model CONSTANT)
     Q_PROPERTY(QString title READ title CONSTANT)
     Q_PROPERTY(bool visible READ isVisible NOTIFY visibilityChanged)
@@ -68,6 +72,8 @@ private:
 class HomeScreenModel : public QObject
 {
     Q_OBJECT
+    QML_ELEMENT
+    QML_UNCREATABLE("Provided by AppController; not constructible from QML.")
     Q_PROPERTY(HomeRail *continueWatching READ continueWatching CONSTANT)
     Q_PROPERTY(HomeRail *recentlyAdded READ recentlyAdded CONSTANT)
     Q_PROPERTY(HomeRail *recommended READ recommended CONSTANT)

@@ -23,7 +23,7 @@ Flickable {
     readonly property int columns: Responsive.columnsFor(
         width - Responsive.pageMargin * 2, cardWidth, 2, 8)
 
-    implicitHeight: content.height
+    implicitHeight: column.implicitHeight
     contentHeight: column.implicitHeight + Theme.spaceXxl * 2
     clip: true
     boundsBehavior: Flickable.StopAtBounds
@@ -89,21 +89,33 @@ Flickable {
 
             ScrollBar.vertical: ScrollBar {}
 
+            // The roles are declared on the *delegate* rather than read as
+            // `model.title`: a named role is a property lookup on the item,
+            // and `model.x` is a string lookup resolved again on every repaint
+            // of every cell.
             delegate: Item {
-                required property int index
+                id: cell
                 width: grid.cellWidth
                 height: grid.cellHeight
+
+                required property int index
+                required property string title
+                required property string subtitle
+                required property int mediaId
+                required property real progress
+                required property bool favorite
+                required property url posterUrl
 
                 PosterCard {
                     anchors.fill: parent
                     anchors.margins: Theme.spaceSm
-                    title: model.title
-                    subtitle: model.subtitle
-                    mediaId: model.mediaId
-                    progress: model.progress
-                    isFavorite: model.favorite
-                    posterUrl: model.posterUrl
-                    onActivated: screen.titleActivated(model.mediaId)
+                    title: cell.title
+                    subtitle: cell.subtitle
+                    mediaId: cell.mediaId
+                    progress: cell.progress
+                    isFavorite: cell.favorite
+                    posterUrl: cell.posterUrl
+                    onActivated: screen.titleActivated(cell.mediaId)
                 }
             }
         }

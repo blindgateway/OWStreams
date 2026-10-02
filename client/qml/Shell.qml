@@ -2,7 +2,6 @@ pragma ComponentBehavior: Bound
 
 import QtQuick
 import QtQuick.Controls
-import QtQuick.Layouts
 import Stream
 
 /// The signed-in shell: navigation plus whatever screen the controller says.
@@ -136,72 +135,141 @@ Item {
             visible: active
 
             sourceComponent: Component {
-                Loader {
+                Item {
+                    id: host
                     anchors.fill: parent
                     readonly property var controller: shell.controller
+
+                    /// One line the settings screen prints about the server it
+                    /// is talking to, built here because it is three fields
+                    /// from two objects and the screen should not have to know
+                    /// that.
+                    function describeServer(session) {
+                        if (!session)
+                            return ""
+                        const info = session.serverInfo || ({})
+                        const parts = []
+                        if (info.name || info.version)
+                            parts.push((info.name || qsTr("Stream")) + " "
+                                       + (info.version || ""))
+                        if (info.api_version)
+                            parts.push(qsTr("API %1").arg(info.api_version))
+                        parts.push(session.serverUrl || "")
+                        return parts.filter(function (p) { return p.length > 0 }).join(" · ")
+                    }
 
                     HomeScreen {
                         id: home
                         anchors.fill: parent
-                        visible: controller.screen === 0
-                        home: controller.home
-                        onTitleActivated: function (id) { controller.openDetail(id) }
+                        visible: host.controller.screen === 0
+                        home: host.controller.home
+                        onTitleActivated: function (id) { host.controller.openDetail(id) }
                         onProfileSwitchRequested: shell.profileSwitchRequested()
                     }
 
                     MediaGridScreen {
                         id: library
                         anchors.fill: parent
-                        visible: controller.screen === 1
-                        model: controller.library
+                        visible: host.controller.screen === 1
+                        model: host.controller.library
                         heading: qsTr("Library")
-                        onTitleActivated: function (id) { controller.openDetail(id) }
+                        onTitleActivated: function (id) { host.controller.openDetail(id) }
                     }
 
                     SearchScreen {
                         id: search
                         anchors.fill: parent
-                        visible: controller.screen === 2
+                        visible: host.controller.screen === 2
                         controller: controller
-                        results: controller.searchResults
-                        onTitleActivated: function (id) { controller.openDetail(id) }
+                        results: host.controller.searchResults
+                        onTitleActivated: function (id) { host.controller.openDetail(id) }
                     }
 
                     MediaGridScreen {
                         id: favorites
                         anchors.fill: parent
-                        visible: controller.screen === 3
-                        model: controller.favorites
+                        visible: host.controller.screen === 3
+                        model: host.controller.favorites
                         heading: qsTr("Favourites")
-                        onTitleActivated: function (id) { controller.openDetail(id) }
+                        onTitleActivated: function (id) { host.controller.openDetail(id) }
                     }
 
                     MediaGridScreen {
                         id: history
                         anchors.fill: parent
-                        visible: controller.screen === 4
-                        model: controller.history
+                        visible: host.controller.screen === 4
+                        model: host.controller.history
                         heading: qsTr("History")
-                        onTitleActivated: function (id) { controller.openDetail(id) }
+                        onTitleActivated: function (id) { host.controller.openDetail(id) }
                     }
 
                     SettingsScreen {
                         id: settings
                         anchors.fill: parent
-                        visible: controller.screen === 6
+                        visible: host.controller.screen === AppController.Settings
                         session: shell.session
                         controller: controller
+                        account: shell.session ? shell.session.user : ({})
+                        profiles: shell.session ? shell.session.profiles : []
+                        sessions: shell.session ? shell.session.sessions : []
+                        serverInfo: shell.session
+                                     ? host.describeServer(shell.session) : ""
+                        credentialBackend: shell.session
+                            ? shell.session.credentialBackend : "none"
+                        currentProfileId: shell.session ? shell.session.profileId : 0
+
+                        onRenameProfileRequested: function (id, name) {
+                            shell.session.renameProfile(id, name)
+                        }
+                        onDeleteProfileRequested: function (id) {
+                            shell.session.deleteProfile(id)
+                        }
+                        onSetPinRequested: function (id, pin) {
+                            shell.session.setProfilePin(id, pin)
+                        }
+                        onClearPinRequested: function (id, currentPin) {
+                            shell.session.setProfilePin(id, "", currentPin)
+                        }
+                        onChangePinRequested: function (id, currentPin, newPin) {
+                            shell.session.changeProfilePin(id, currentPin, newPin)
+                        }
+                        onChangePasswordRequested: function (current, next) {
+                            shell.session.submitPasswordChange(current, next)
+                        }
+                        onRevokeSessionRequested: function (id) {
+                            App.api.revokeSession(id)
+                        }
+                        onLogoutEverywhereRequested: App.api.logoutEverywhere()
+                        onSwitchProfileRequested: shell.profileSwitchRequested()
+                        onForgetServerRequested: {
+                            App.credentials.forgetEverything()
+                            shell.session.connectTo("")
+                        }
+                        onSignOutRequested: shell.session.signOut()
                     }
 
                     DetailScreen {
                         id: detail
                         anchors.fill: parent
-                        visible: controller.screen === 6 || controller.screen === 7
-                        mediaId: controller.detailMediaId
-                        media: controller.detail
+                        visible: host.controller.screen === AppController.Detail
+                        mediaId: host.controller.detailMediaId
+                        media: host.controller.detail
                         controller: controller
-                        onBackRequested: controller.back()
-                        onPlayRequested: function (id) { controller.openDetail(id) }
+                        onBackRequested: host.controller.back()
+                        onPlayRequested: function (id) { host.controller.openPlayer(id) }
+                    }
+
+                    // The player is a *layer*, not a destination: it covers the
+                    // shell -- sidebar and all -- and closing it reveals the
+                    // screen it was opened from, untouched.
+                    PlayerScreen {
+                        id: player
+                        anchors.fill: parent
+                        visible: host.controller.screen === AppController.Player
+                        controller: host.controller.player
+                        api: App.api
+                        media: host.controller.detail
+                        onCloseRequested: host.controller.back()
                     }
                 }
             }

@@ -29,10 +29,10 @@ ApplicationWindow {
 
     Component.onCompleted: {
         // The four C++ objects arrive as context properties, which qmllint
-        // cannot resolve -- every unqualified use of one is a false positive,
-        // and the `App` singleton exists so the rest of the UI never has to
-        // spell them.  This is the one place that does, exactly once, before
-        // any Loader below has instantiated a screen.
+        // cannot resolve -- every unqualified use of one is a false positive.
+        // The `App` singleton exists so the rest of the UI never has to spell
+        // them; this is the one place that does, exactly once, before any
+        // Loader below has instantiated a screen.
         App.session = session
         App.api = api
         App.credentials = credentials
@@ -46,75 +46,80 @@ ApplicationWindow {
     Loader {
         id: gate
         anchors.fill: parent
-        active: root.session.state !== SessionController.Home
+        active: App.session.state !== SessionController.Home
         visible: active
 
         sourceComponent: Component {
-            // The gate's own views are declared with `visible`, not in a
-            // StackView: five screens that are cheap to construct, and a
-            // StackView would make "back" a question about navigation depth
-            // when the state machine already knows the answer.
-            ServerScreen {
-                id: server
+            // Five screens behind one `visible` binding each, not a StackView:
+            // they are cheap to construct, and a StackView would make "back" a
+            // question about navigation depth when the state machine already
+            // knows the answer.
+            Item {
+                id: gateRoot
                 anchors.fill: parent
-                visible: root.session.state === SessionController.NoServer
-                      || root.session.state === SessionController.Connecting
-                initialUrl: root.session.serverUrl
-                busy: root.session.state === SessionController.Connecting
-                errorMessage: root.session.lastError
-                onSubmitted: function (url) { root.session.connectTo(url) }
-            }
 
-            LoginScreen {
-                id: login
-                anchors.fill: parent
-                visible: root.session.state === SessionController.Login
-                serverUrl: root.session.serverUrl
-                username: App.credentials.lastAccount
-                busy: root.session.state === SessionController.Connecting
-                errorMessage: root.session.lastError
-                onSubmitted: function (username, password, remember) {
-                    root.session.signIn(username, password, remember)
+                ServerScreen {
+                    id: server
+                    anchors.fill: parent
+                    visible: App.session.state === SessionController.NoServer
+                          || App.session.state === SessionController.Connecting
+                    initialUrl: App.session.serverUrl
+                    busy: App.session.state === SessionController.Connecting
+                    errorMessage: App.session.lastError
+                    onSubmitted: function (url) { App.session.connectTo(url) }
                 }
-                onChangeServerRequested: {
-                    App.credentials.forgetEverything()
-                    root.session.connectTo("")
-                }
-            }
 
-            ProfileScreen {
-                id: profiles
-                anchors.fill: parent
-                visible: root.session.state === SessionController.Profiles
-                username: root.session.username
-                // The screen owns its own busy state: a PIN attempt is
-                // short enough that a global spinner would flicker through the
-                // whole picker.
-                busy: false
-                errorMessage: root.session.lastError
-                onProfileSelected: function (id) { root.session.selectProfile(id) }
-                onUnlockRequested: function (id, pin) {
-                    root.session.unlockProfile(id, pin)
+                LoginScreen {
+                    id: login
+                    anchors.fill: parent
+                    visible: App.session.state === SessionController.Login
+                    serverUrl: App.session.serverUrl
+                    username: App.credentials.lastAccount
+                    busy: App.session.state === SessionController.Connecting
+                    errorMessage: App.session.lastError
+                    onSubmitted: function (username, password, remember) {
+                        App.session.signIn(username, password, remember)
+                    }
+                    onChangeServerRequested: {
+                        App.credentials.forgetEverything()
+                        App.session.connectTo("")
+                    }
                 }
-                onCreateRequested: function (name, pin) {
-                    root.session.createProfile(name, pin)
-                }
-                onSignOutRequested: root.session.signOut()
-            }
 
-            // A server with no accounts has no sign-in to offer, so it lands
-            // here too: the screen asks for the first administrator.
-            ChangePasswordScreen {
-                id: changePassword
-                anchors.fill: parent
-                visible: root.session.state === SessionController.ChangePassword
-                username: root.session.username
-                busy: false
-                errorMessage: root.session.lastError
-                onSubmitted: function (current, next) {
-                    root.session.submitPasswordChange(current, next)
+                ProfileScreen {
+                    id: profiles
+                    anchors.fill: parent
+                    visible: App.session.state === SessionController.Profiles
+                    username: App.session.username
+                    // The screen owns its own busy state: a PIN attempt is
+                    // short enough that a global spinner would flicker through
+                    // the whole picker.
+                    busy: false
+                    errorMessage: App.session.lastError
+                    onProfileSelected: function (id) { App.session.selectProfile(id) }
+                    onUnlockRequested: function (id, pin) {
+                        App.session.unlockProfile(id, pin)
+                    }
+                    onCreateRequested: function (name, pin) {
+                        App.session.createProfile(name, pin)
+                    }
+                    onSignOutRequested: App.session.signOut()
                 }
-                onSignOutRequested: root.session.signOut()
+
+                // A server with no accounts has no sign-in to offer, so it
+                // lands here too: the screen asks for the first administrator.
+                ChangePasswordScreen {
+                    id: changePassword
+                    anchors.fill: parent
+                    visible: App.session.state === SessionController.ChangePassword
+                    username: App.session.username
+                    busy: false
+                    errorMessage: App.session.lastError
+                    onSubmitted: function (current, next) {
+                        App.session.submitPasswordChange(current, next)
+                    }
+                    onSignOutRequested: App.session.signOut()
+                }
             }
         }
     }
@@ -123,10 +128,10 @@ ApplicationWindow {
     Shell {
         id: shell
         anchors.fill: parent
-        visible: root.session.state === SessionController.Home
+        visible: App.session.state === SessionController.Home
         controller: App.controller
-        session: root.session
+        session: App.session
 
-        onProfileSwitchRequested: root.session.showProfiles()
+        onProfileSwitchRequested: App.session.showProfiles()
     }
 }

@@ -147,9 +147,26 @@ public:
     /// Absolute URL for the stream endpoint of a title, given a playback token.
     /// Empty when there is no playback token for that title.
     QUrl streamUrl(int mediaId) const;
+
+    /// What `playbackFinished` carries.  Published because it is the only way a
+    /// caller -- or a test -- can observe that a close was requested without a
+    /// server to answer it, and because a signal that names its own payload type
+    /// is one the linter can check.
+    struct FinishedPlayback {
+        int mediaId = 0;
+        double positionSeconds = 0.0;
+        QString sessionId;
+    };
     /// Absolute URL of one title's poster or backdrop (`kind` is "poster" or
-    /// "backdrop").  Public so a delegate can build one without a round trip.
-    QUrl artworkUrl(int mediaId, const QString &kind) const;
+    /// "backdrop"), or an invalid URL when `hasPosterKey` is false.
+    ///
+    /// The key is passed rather than looked up: this is a `const` function and
+    /// the answer it gives does not depend on the media row, only on whether
+    /// that row *has* artwork.  A caller that already has the row -- every
+    /// delegate, and the player -- already has the key, and a lookup table of
+    /// which titles have posters would be a second source of truth the moment
+    /// the server's answer changed.
+    QUrl artworkUrl(int mediaId, const QString &kind, bool hasPosterKey = true) const;
 
 signals:
     void baseUrlChanged();
@@ -191,7 +208,7 @@ signals:
     void playbackStarted(int mediaId, const QString &streamUrl,
                          double startOffset, int expiresInSeconds);
     void progressReported(int mediaId, double percent);
-    void playbackFinished(int mediaId);
+    void playbackFinished(const ApiClient::FinishedPlayback &playback);
 
     void profilesLoaded(const QJsonArray &profiles);
     void profileSelected(int profileId);
