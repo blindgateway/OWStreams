@@ -182,17 +182,25 @@ Item {
             }
         }
         // Repaint when anything the drawing depends on changes.
+        //
+        // `target: icon` rather than left implicit.  A `Connections` inside a
+        // nested item has the *nested* item as its default target, not the one
+        // the author was thinking of -- and `canvas` has none of these signals,
+        // so the handlers never ran and the icon was drawn once, at
+        // construction, and never again.  A heart tapped to be filled stayed
+        // hollow, and a play button that became a pause stayed a play.
+        //
+        // The two blocks are one: `strokeWidth` and `width` are the same change
+        // seen twice, and splitting them is how the wrong-target bug survived.
         Connections {
+            target: icon
             function onNameChanged() { canvas.requestPaint() }
             function onColorChanged() { canvas.requestPaint() }
             function onStrokeWidthChanged() { canvas.requestPaint() }
-        }
-        Component.onCompleted: canvas.requestPaint()
-        Connections {
-            target: icon
             function onWidthChanged() { canvas.requestPaint() }
             function onHeightChanged() { canvas.requestPaint() }
         }
+        Component.onCompleted: canvas.requestPaint()
     }
 
     /// Filled icons are the ones where an outline reads as "not selected".

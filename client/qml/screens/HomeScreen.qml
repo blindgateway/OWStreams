@@ -79,7 +79,7 @@ Flickable {
         // -- rails -------------------------------------------------------
         Repeater {
             id: railRepeater
-            model: screen.home ? screen.home.rails() : []
+            model: screen.home ? screen.home.rails : []
 
             delegate: Item {
                 id: railHost
@@ -108,8 +108,8 @@ Flickable {
         Item {
             Layout.fillWidth: true
             Layout.preferredHeight: 200
-            visible: screen.home && !screen.home.loading && !screen.home.failed
-                     && screen.home.rails().every(function (r) { return r.model.count === 0 })
+            visible: Boolean(screen.home) && !screen.home.loading && !screen.home.failed
+                     && screen.home.rails.every(function (r) { return r.model.count === 0 })
 
             StatusPane {
                 anchors.fill: parent

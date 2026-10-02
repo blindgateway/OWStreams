@@ -74,7 +74,11 @@ ApplicationWindow {
                     anchors.fill: parent
                     visible: App.session.state === SessionController.Login
                     serverUrl: App.session.serverUrl
-                    username: App.credentials.lastAccount
+                    // `|| ""`, because `lastAccount` is `undefined` until something has been
+                    // saved and a `string` property refuses `undefined` at run
+                    // time.  The login screen's own default is the empty string
+                    // for exactly that reason.
+                    username: App.credentials.lastAccount || ""
                     busy: App.session.state === SessionController.Connecting
                     errorMessage: App.session.lastError
                     onSubmitted: function (username, password, remember) {

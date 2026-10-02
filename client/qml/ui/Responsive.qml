@@ -11,7 +11,15 @@ QtObject {
     /// The window this singleton measures.  Set once by Main; a bare `width`
     /// on a non-Item is ambiguous, and the break points are the one thing in
     /// the UI that must never be ambiguous.
-    property Item window
+    /// `var`, not `Item`.
+    ///
+    /// It is assigned an `ApplicationWindow`, which is a `QQuickWindowQmlImpl`
+    /// -- a QObject, not a QQuickItem -- so an `Item`-typed property refuses
+    /// the assignment at run time with "Cannot assign QObject* to QQuickItem*".
+    /// Nothing reads `window` as an item; it is read for `width` and `height`.
+    /// An earlier version that did read it as an item, `screen.width`, would
+    /// have been `undefined` for the same reason.
+    property var window
 
     readonly property real width: window ? window.width : 0
     readonly property real height: window ? window.height : 0

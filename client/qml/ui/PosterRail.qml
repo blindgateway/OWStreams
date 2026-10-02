@@ -36,7 +36,19 @@ Item {
 
     signal activated(int mediaId)
 
-    implicitHeight: heading.height + Theme.spaceLg + row.height + Theme.spaceSm
+    // Measured from the heading and the card, never from `row.height`.
+    //
+    // `row` is anchored `top: heading.bottom` *and* `bottom: parent.bottom`,
+    // so its height is "whatever is left" -- and this property is part of what
+    // is left, because `HomeScreen` sizes its host row from
+    // `rail.implicitHeight`.  Each read raised the floor, each raise made the
+    // row taller, and Qt dropped the binding with
+    //
+    //     Binding loop detected for property "implicitHeight"
+    //
+    // and left the rail sized by the layout's fallback.  It looked right, and
+    // stopped responding to a change of window size.
+    implicitHeight: heading.height + Theme.spaceLg + row.cardHeight + Theme.spaceSm
 
     Text {
         id: heading
@@ -82,6 +94,24 @@ Item {
         // Width tracks the form factor rather than a column count, so a phone
         // poster is thumb-sized and a desktop one is not a postage stamp.
         readonly property real cardWidth: Responsive.isPhone ? 132 : 150
+
+        /// The height of one card, taken from `PosterCard`'s own
+        /// `implicitHeight` rather than re-derived here.
+        ///
+        /// The two have to agree -- the rail's content height and the card's --
+        /// and they are the same formula written twice otherwise.  One card is
+        /// enough to measure because a rail is a single horizontal line: its
+        /// height does not depend on how many posters are in it.
+        readonly property real cardHeight: cardSize.implicitHeight
+
+        // Invisible, and never parented to the flickable: a real card would be
+        // laid out inside it and counted in `contentWidth`.  It exists only to
+        // be measured, and it costs one item.
+        PosterCard {
+            id: cardSize
+            visible: false
+            width: row.cardWidth
+        }
 
         MouseArea {
             id: wheelArea

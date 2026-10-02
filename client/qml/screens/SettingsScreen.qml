@@ -652,10 +652,15 @@ Flickable {
 
             Text {
                 Layout.fillWidth: true
-                visible: screen.account && screen.account.last_login_at
-                         && String(screen.account.last_login_at).length > 0
-                text: qsTr("Last signed in %1")
-                      .arg(String(screen.account.last_login_at))
+                // `account` defaults to `{}`, so `account.last_login_at` is
+                // `undefined` -- and assigning `undefined` to `bool` is a
+                // warning, not a false.  `Boolean(...)` is the conversion that
+                // says what it means.
+                visible: Boolean(screen.account && screen.account.last_login_at)
+                text: screen.account && screen.account.last_login_at
+                      ? qsTr("Last signed in %1")
+                            .arg(String(screen.account.last_login_at))
+                      : ""
                 color: Theme.textMuted
                 font.pixelSize: Theme.typeCaption
                 font.family: Theme.family
@@ -666,7 +671,7 @@ Flickable {
             // be a badge.
             Text {
                 Layout.fillWidth: true
-                visible: !!(screen.account && screen.account.is_admin)
+                visible: Boolean(screen.account && screen.account.is_admin)
                 text: qsTr("This account is an administrator on this server.")
                 color: Theme.textFaint
                 font.pixelSize: Theme.typeMicro

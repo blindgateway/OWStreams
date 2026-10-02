@@ -63,7 +63,7 @@ Flickable {
             Text {
                 anchors.right: parent.right
                 anchors.verticalCenter: parent.verticalCenter
-                visible: screen.model && screen.model.count > 0
+                visible: Boolean(screen.model) && screen.model.count > 0
                 text: qsTr("%n title(s)", "", screen.model ? screen.model.count : 0)
                 color: Theme.textMuted
                 font.pixelSize: Theme.typeCaption
@@ -94,7 +94,7 @@ Flickable {
             Layout.leftMargin: Responsive.pageMargin
             Layout.rightMargin: Responsive.pageMargin
             Layout.preferredHeight: 180
-            mode: screen.model && screen.model.failed ? "error"
+            mode: Boolean(screen.model && screen.model.failed) ? "error"
                   : (screen.model && screen.model.loading ? "loading" : "")
             message: screen.model ? screen.model.errorMessage : ""
             retryable: screen.model ? screen.model.retryable : false

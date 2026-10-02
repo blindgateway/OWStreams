@@ -87,6 +87,14 @@ class HomeScreenModel : public QObject
     Q_PROPERTY(bool retryable READ isRetryable NOTIFY failedChanged)
     Q_PROPERTY(int genreCount READ genreCount NOTIFY contentChanged)
     Q_PROPERTY(QUrl baseUrl READ baseUrl WRITE setBaseUrl NOTIFY baseUrlChanged)
+    /// Every rail, in reading order, as one list.
+    ///
+    /// Exposed because `HomeScreen` renders the rails from a `Repeater` rather
+    /// than naming seven of them in the QML: seven hand-written blocks is seven
+    /// places to forget a rail and no single place to reorder them.  `NOTIFY
+    /// contentChanged` because a rail becoming visible or empty is exactly what
+    /// this list is for.
+    Q_PROPERTY(QList<HomeRail *> rails READ rails NOTIFY contentChanged)
     /// Genre shortcuts from the same payload as the rails.  A list rather than
     /// a model because it is a dozen entries read once and never re-sorted.
     Q_PROPERTY(QVariantList genres READ genres NOTIFY contentChanged)
