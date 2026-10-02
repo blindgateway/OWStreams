@@ -21,7 +21,7 @@ from ...db import repositories as repo
 from ...security import passwords
 from ...security.audit import SecurityEventTypes
 from ...security.paths import MediaRootRegistry, PathViolation
-from ..deps import AdminDep, Ctx, client_ip, require_admin
+from ..deps import AdminDep, Ctx, _enforce_limit, client_ip, require_admin
 from ..schemas import (
     AdminId,
     AdminUserCreate,
@@ -288,6 +288,11 @@ async def run_import(payload: ImportRequest, context: Ctx, admin: AdminDep,
     """
     from ...services.importer import PathNotImportable
 
+    # A scan walks the whole library on the slow HDD and ffprobes everything
+    # new.  The generic api bucket (600/min) is not a meaningful bound on that,
+    # and the ``import`` bucket existed in the config without ever being read.
+    _enforce_limit(context, "import", f"user:{admin.user_id}", request=request)
+
     added, updated, errors = 0, 0, []
     for raw in payload.paths[:1000]:
         try:
@@ -329,13 +334,19 @@ async def run_import(payload: ImportRequest, context: Ctx, admin: AdminDep,
 
 
 @router.post("/verify", summary="Re-check every media file against the filesystem")
-async def verify(context: Ctx, admin: AdminDep, deep: bool = False) -> dict:
+async def verify(request: Request, context: Ctx, admin: AdminDep,
+                 deep: bool = False) -> dict:
+    # ``deep`` ffprobes every file in the library: the same cost as a scan.
+    _enforce_limit(context, "import" if deep else "maintenance",
+                   f"user:{admin.user_id}", request=request)
     return context.importer.verify_integrity(deep=deep)
 
 
 @router.post("/reindex", response_model=OkResponse,
              summary="Rebuild the full-text search index")
-async def reindex(context: Ctx, admin: AdminDep) -> OkResponse:
+async def reindex(request: Request, context: Ctx, admin: AdminDep) -> OkResponse:
+    # Rebuilds the FTS index for every title, in one transaction.
+    _enforce_limit(context, "maintenance", f"user:{admin.user_id}", request=request)
     count = context.importer.reset_search_index()
     return OkResponse(detail=f"Reindexed {count} titles.")
 
@@ -389,8 +400,10 @@ async def settings(context: Ctx, admin: AdminDep) -> dict:
 
 @router.post("/maintenance/prune", response_model=OkResponse,
              summary="Remove expired tokens, sessions and old login attempts")
-async def prune(context: Ctx, admin: AdminDep) -> OkResponse:
+async def prune(request: Request, context: Ctx, admin: AdminDep) -> OkResponse:
     from ...security import tokens as token_module
+
+    _enforce_limit(context, "maintenance", f"user:{admin.user_id}", request=request)
 
     tokens_removed = 0
     with context.db.write() as conn:
@@ -416,6 +429,7 @@ async def make_backup(context: Ctx, admin: AdminDep, request: Request) -> OkResp
 
     from ...db.database import backup as make_backup_file
 
+    _enforce_limit(context, "maintenance", f"user:{admin.user_id}", request=request)
     stamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
     destination = context.config.backup_path / f"streamserver-{stamp}.db.gz"
     make_backup_file(context.db, destination)
@@ -429,7 +443,10 @@ async def make_backup(context: Ctx, admin: AdminDep, request: Request) -> OkResp
 
 @router.post("/maintenance/vacuum", response_model=OkResponse,
              summary="Compact the database file")
-async def vacuum(context: Ctx, admin: AdminDep) -> OkResponse:
+async def vacuum(request: Request, context: Ctx, admin: AdminDep) -> OkResponse:
+    # VACUUM rewrites the whole database file and holds an exclusive lock
+    # while it does: concurrent requests queue behind it rather than failing.
+    _enforce_limit(context, "maintenance", f"user:{admin.user_id}", request=request)
     context.db.wal_checkpoint("TRUNCATE")
     context.db.vacuum()
     return OkResponse(detail="Database compacted.")

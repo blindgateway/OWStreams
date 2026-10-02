@@ -155,6 +155,8 @@ def _build_context(config: Config) -> AppContext:
     limiter.configure("stream", limits.stream_per_minute)
     limiter.configure("search", limits.search_per_minute)
     limiter.configure("import", limits.import_per_minute)
+    limiter.configure("maintenance", limits.maintenance_per_minute)
+    limiter.configure("pin", limits.pin_attempts_per_minute)
 
     registry = MediaRootRegistry(tuple(Path(p) for p in config.media.library_roots))
 
@@ -174,7 +176,8 @@ def _build_context(config: Config) -> AppContext:
         db=db,
         registry=registry,
         auth=AuthService(db, config.auth, secret, limiter=limiter, audit=audit),
-        profiles=ProfileService(db, audit=audit),
+        profiles=ProfileService(db, audit=audit, limiter=limiter,
+                                pin_attempts_per_minute=limits.pin_attempts_per_minute),
         library=LibraryService(db, config.media),
         history=HistoryService(db, config.media),
         ratings=RatingService(db),

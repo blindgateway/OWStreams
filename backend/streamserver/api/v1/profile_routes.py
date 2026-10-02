@@ -144,19 +144,23 @@ async def unlock(profile_id: ProfilePathId, request: Request, payload: ProfilePi
     """Verify a PIN.
 
     The PIN protects a *local* profile selection; it is not an authentication
-    credential and grants nothing beyond this profile.  Attempts are counted
-    per request chain by the client (``attempts``) and by the service's own
-    cooldown, so a four-digit space is not practically guessable.
+    credential and grants nothing beyond this profile.
+
+    The throttle is a server-side token bucket keyed on (user, profile).  The
+    ``X-Pin-Attempt`` header is a *display hint* the client sends so it can show
+    a countdown without asking; it is never what decides whether a guess is
+    allowed, because a client that omits it would otherwise be unthrottled.
     """
-    attempts = int(request.headers.get("X-Pin-Attempt", "0") or 0)
+    hinted = int(request.headers.get("X-Pin-Attempt", "0") or 0)
     try:
-        context.profiles.verify_pin(caller.user_id, profile_id, payload.pin,
-                                    attempts=min(attempts, 20))
+        context.profiles.verify_pin(caller.user_id, profile_id, payload.pin)
     except PinIncorrectError as exc:
         context.audit.record(
             "profile.pin.failed", outcome="denied",
             user_id=caller.user_id, profile_id=profile_id,
-            ip_address=caller.ip, detail={"attempt": attempts + 1},
+            ip_address=caller.ip,
+            detail={"client_attempt_hint": min(hinted, 20),
+                    "attempts_left": exc.attempts_left},
         )
         raise _handle(exc) from exc
     except PinRequiredError as exc:  # pragma: no cover - defensive

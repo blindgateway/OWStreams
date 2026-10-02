@@ -19,13 +19,17 @@ from ..db.database import Database
 from ..db.repositories import DuplicateNameError
 from ..security import passwords
 from ..security.audit import AuditLogger, SecurityEventTypes
+from ..security.rate_limit import RateLimiter
 
 log = logging.getLogger(__name__)
 
 MAX_PROFILES_PER_USER = 8
 MAX_PROFILE_NAME_LENGTH = 24
-MIN_PIN_ATTEMPTS_BEFORE_COOLDOWN = 5
-PIN_COOLDOWN_SECONDS = 60
+#: The PIN throttle is a token bucket (``rate_limit.pin_attempts_per_minute``),
+#: not a fixed count of tries.  A fixed count either trusts the client -- which
+#: is what these two constants used to do, via the X-Pin-Attempt header -- or
+#: locks a legitimate user out for a fixed period regardless of whether anyone
+#: else is guessing.
 
 
 class ProfileError(Exception):
@@ -96,9 +100,14 @@ class ProfileView:
 
 
 class ProfileService:
-    def __init__(self, db: Database, *, audit: AuditLogger | None = None) -> None:
+    def __init__(self, db: Database, *, audit: AuditLogger | None = None,
+                 limiter: RateLimiter | None = None,
+                 pin_attempts_per_minute: int = 6) -> None:
         self.db = db
         self.audit = audit or AuditLogger(db, enabled=False)
+        self.limiter = limiter or RateLimiter()
+        if pin_attempts_per_minute > 0:
+            self.limiter.configure("pin", pin_attempts_per_minute)
 
     # -- listing / lookup -------------------------------------------------
     def list_for_user(self, user_id: int) -> list[ProfileView]:
@@ -304,15 +313,29 @@ class ProfileService:
 
     def verify_pin(self, user_id: int, profile_id: int, pin: str,
                    *, attempts: int = 0) -> None:
-        """Raise on failure; return cleanly when the PIN matches."""
+        """Raise on failure; return cleanly when the PIN matches.
+
+        The throttle is *server-side*.  ``attempts`` is the client's own count
+        and is only ever a display hint: gating on it meant a client could
+        simply omit the header and guess a 4-digit PIN at the API's generic
+        600/minute rate, which is a few thousand guesses a minute.
+
+        A wrong PIN spends a token from a per-profile bucket; the bucket is
+        only refilled by a *correct* PIN, so one unlucky user is not locked out
+        and one attacker cannot keep guessing.
+        """
         profile = self.get_for_user(user_id, profile_id)
         pin_hash = profile.get("pin_hash")
         if not pin_hash:
             return
 
-        if attempts >= MIN_PIN_ATTEMPTS_BEFORE_COOLDOWN:
-            # A short cooldown makes guessing a 4-digit PIN pointless even
-            # though the account itself is already authenticated.
+        key = f"{user_id}:{profile_id}"
+        allowed, remaining, _ = self.limiter.allow("pin", key)
+        if not allowed:
+            self.audit.record(
+                SecurityEventTypes.PROFILE_PIN_FAILED, outcome="denied",
+                user_id=user_id, profile_id=profile_id, detail={"throttled": True},
+            )
             raise PinIncorrectError(
                 "Too many PIN attempts. Wait a moment and try again.",
                 attempts_left=0,
@@ -324,9 +347,11 @@ class ProfileService:
                 user_id=user_id, profile_id=profile_id,
                 detail={"attempt": attempts + 1},
             )
-            raise PinIncorrectError(
-                attempts_left=max(0, MIN_PIN_ATTEMPTS_BEFORE_COOLDOWN - attempts - 1)
-            )
+            raise PinIncorrectError(attempts_left=max(0, int(remaining) - 1))
+
+        # A correct guess clears the throttle, so a legitimate user who fat
+        # fingered their PIN twice is not left waiting out a bucket.
+        self.limiter.reset("pin", key)
 
         # Opportunistically upgrade a legacy plaintext PIN.
         if not str(pin_hash).startswith("scrypt$"):

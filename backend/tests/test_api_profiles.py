@@ -174,21 +174,76 @@ def test_replacing_a_pin_requires_the_current_one(client, owner):
 
 
 def test_pin_attempts_are_throttled(client, owner):
+    """A wrong PIN is refused and reported; the bucket then runs dry.
+
+    The throttle is a server-side token bucket, so no request header is
+    involved and a client cannot talk its way past it.
+    """
     profile = _create(client, owner["headers"], name="Kids", pin="1357")
-    for attempt in range(4):
-        response = client.post(
-            f"/api/v1/profiles/{profile['id']}/unlock",
-            headers={**owner["headers"], "X-Pin-Attempt": str(attempt)},
-            json={"pin": "0000"},
-        )
-        assert response.status_code == 401
-    # The fifth attempt is refused outright rather than being allowed to keep
-    # guessing a four-digit space.
-    blocked = client.post(f"/api/v1/profiles/{profile['id']}/unlock",
-                          headers={**owner["headers"], "X-Pin-Attempt": "5"},
-                          json={"pin": "1357"})
+    url = f"/api/v1/profiles/{profile['id']}/unlock"
+
+    for _ in range(20):
+        response = client.post(url, headers=owner["headers"], json={"pin": "0000"})
+        assert response.status_code in (401, 429), response.text
+        if response.status_code == 429:
+            break
+
+    blocked = client.post(url, headers=owner["headers"], json={"pin": "0000"})
     assert blocked.status_code == 401
     assert "too many" in blocked.json()["message"].lower()
+
+    # And the correct PIN is refused too, while the bucket is empty: a
+    # legitimate user who fat-fingered their way here waits a minute rather
+    # than being let in by an attacker who already drained it.
+    assert client.post(url, headers=owner["headers"],
+                       json={"pin": "1357"}).status_code == 401
+
+
+def test_the_pin_throttle_is_not_client_controlled(client, owner):
+    """Regression: the cooldown was gated on an X-Pin-Attempt header the
+    client chose, so pinning it to 0 unthrottled the endpoint entirely --
+    3000 guesses in 42 s."""
+    profile = _create(client, owner["headers"], name="Kids", pin="1357")
+    url = f"/api/v1/profiles/{profile['id']}/unlock"
+
+    guessed = 0
+    for _ in range(30):
+        response = client.post(url, headers=owner["headers"],
+                               json={"pin": f"{guessed:04d}"})
+        guessed += 1
+        if response.status_code != 401 or "too many" in response.json()["message"].lower():
+            break
+
+    assert guessed <= 8, f"{guessed} guesses before the throttle engaged"
+
+
+def test_a_correct_pin_clears_the_throttle(client, owner):
+    """Two fat-fingered guesses must not lock the owner out of their own
+    kids profile; the bucket is refilled by a success."""
+    profile = _create(client, owner["headers"], name="Kids", pin="1357")
+    url = f"/api/v1/profiles/{profile['id']}/unlock"
+
+    for _ in range(3):
+        client.post(url, headers=owner["headers"], json={"pin": "0000"})
+    assert client.post(url, headers=owner["headers"],
+                       json={"pin": "1357"}).status_code == 200
+    # And there is room to try again afterwards.
+    assert client.post(url, headers=owner["headers"],
+                       json={"pin": "1357"}).status_code == 200
+
+
+def test_the_pin_throttle_is_per_profile(client, owner):
+    """A throttled profile must not lock out the account's other profiles."""
+    kids = _create(client, owner["headers"], name="Kids", pin="1357")
+    other = _create(client, owner["headers"], name="Adult")
+    for _ in range(30):
+        response = client.post(f"/api/v1/profiles/{kids['id']}/unlock",
+                               headers=owner["headers"], json={"pin": "0000"})
+        if response.status_code != 401 or "too many" in response.json()["message"].lower():
+            break
+    unlocked = client.post(f"/api/v1/profiles/{other['id']}/unlock",
+                           headers=owner["headers"], json={"pin": "0000"})
+    assert unlocked.status_code == 200
 
 
 def test_locked_state_is_reportable(client, owner):

@@ -117,7 +117,14 @@ class RateLimitConfig:
     api_per_minute: int = 600
     stream_per_minute: int = 120
     search_per_minute: int = 120
+    #: Bulk library work: import/rescan, deep verify, reindex, backup.  Each of
+    #: these walks the whole tree or rewrites the whole index, so the generic
+    #: 600/min api ceiling is not a meaningful bound on them.
     import_per_minute: int = 30
+    maintenance_per_minute: int = 12
+    #: PIN guesses per profile.  A 4-digit PIN is 10^4, so this is the only
+    #: thing standing between a stolen session and a kids profile.
+    pin_attempts_per_minute: int = 6
 
 
 @dataclass(slots=True)

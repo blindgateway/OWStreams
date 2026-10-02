@@ -520,3 +520,45 @@ def test_the_user_listing_shape_matches_the_single_user_shape(client, owner):
     for field in ("id", "username", "display_name", "is_admin", "must_change_password"):
         assert field in listed, field
         assert field in single, field
+
+
+# ---------------------------------------------------------------------------
+# Bulk library work is rate limited
+# ---------------------------------------------------------------------------
+@pytest.mark.parametrize("path", [
+    "/api/v1/admin/import",
+    "/api/v1/admin/reindex",
+    "/api/v1/admin/verify",
+    "/api/v1/admin/backup",
+    "/api/v1/admin/maintenance/prune",
+    "/api/v1/admin/maintenance/vacuum",
+])
+def test_bulk_admin_work_is_throttled(client, owner, path):
+    """These each walk the library, ffprobe every file or rewrite the whole
+    database.  Under the generic 600/min api bucket they were simply a way to
+    keep the 4-core box busy; the import/maintenance buckets are what bound
+    them."""
+    method = "post"
+    body = {"paths": [], "scan": False}
+    statuses = []
+    for _ in range(40):
+        kwargs = {"headers": owner["headers"]}
+        if path == "/api/v1/admin/import":
+            kwargs["json"] = body
+        response = getattr(client, method)(path, **kwargs)
+        statuses.append(response.status_code)
+        if response.status_code == 429:
+            break
+
+    assert 429 in statuses, f"{path} never throttled: {statuses}"
+    assert "retry-after" in {k.lower() for k in response.headers}
+
+
+def test_a_throttled_admin_call_reports_when_to_retry(client, owner):
+    for _ in range(40):
+        response = client.post("/api/v1/admin/reindex", headers=owner["headers"])
+        if response.status_code == 429:
+            break
+    assert response.status_code == 429
+    assert response.json()["error"] == "rate_limited"
+    assert int(response.headers["Retry-After"]) >= 1
