@@ -189,5 +189,33 @@ def install_handlers(app: FastAPI) -> None:
     app.add_exception_handler(sqlite3.Error, sqlite_error_handler)
     app.add_exception_handler(Exception, unhandled_error_handler)
 
+    # The handlers above always return this shape, but FastAPI generates the
+    # OpenAPI document from the route *signatures* -- so without this the
+    # published contract would say "no documented failure" and a client
+    # generator would have no error type to handle.  401 is left to FastAPI's
+    # HTTPBearer, which documents it as soon as a route asks for a dependency.
+    from .schemas import ErrorResponse
+
+    descriptions = {
+        400: "bad_request",
+        401: "unauthenticated",
+        403: "forbidden",
+        404: "not_found",
+        409: "conflict",
+        413: "payload_too_large",
+        422: "validation_error",
+        423: "locked",
+        429: "rate_limited",
+        500: "internal_error",
+    }
+    document = {
+        status: {"model": ErrorResponse, "description": code}
+        for status, code in descriptions.items()
+    }
+    for route in app.routes:
+        responses = getattr(route, "responses", None)
+        if isinstance(responses, dict):
+            responses.update(document)
+
 
 __all__ = ["install_handlers", "repo"]

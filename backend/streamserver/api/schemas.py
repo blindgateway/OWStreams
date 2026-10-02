@@ -45,6 +45,12 @@ class ErrorResponse(BaseModel):
 
 
 class PageMeta(BaseModel):
+    """Pagination fields, for endpoints that return a bare list.
+
+    :class:`MediaPage` inlines the same four fields rather than nesting them, so
+    a client reading ``items`` does not have to reach through an extra object.
+    """
+
     total: int
     offset: int
     limit: int
@@ -446,6 +452,10 @@ class HealthOut(BaseModel):
     ffprobe_available: bool
 
 
-AccountId = Annotated[int, Field(ge=1)]
-ProfileId = Annotated[int, Field(ge=1)]
-MediaId = Annotated[int, Field(ge=1)]
+#: Path-parameter bounds.  Routes should declare these instead of a bare
+#: ``int`` so an id of 0 or -1 is rejected by validation instead of being
+#: compared against the database -- and so the bound shows up in the OpenAPI
+#: document.
+AdminId = Annotated[int, Field(ge=1)]
+ProfilePathId = Annotated[int, Field(ge=1)]
+MediaPathId = Annotated[int, Field(ge=1)]

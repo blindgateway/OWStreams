@@ -43,6 +43,7 @@ from ...security import tokens
 from ...security.audit import SecurityEventTypes
 from ...security.paths import PathViolation
 from ..schemas import (
+    MediaPathId,
     MediaOut,
     OkResponse,
     PlaybackTokenOut,
@@ -58,7 +59,7 @@ PLAYBACK_SESSION_TTL = 6 * 3600   # 6 hours
 
 @router.post("/{media_id}/playback", response_model=PlaybackTokenOut,
              summary="Mint a short-lived token for streaming one title")
-async def start_playback(media_id: int, request: Request, context: Ctx,
+async def start_playback(media_id: MediaPathId, request: Request, context: Ctx,
                          caller: CallerDep, profile_id: ProfileDep,
                          start_offset: Annotated[float, Query(ge=0)] = 0.0) -> PlaybackTokenOut:
     media = repo.get_media_full(context.db, media_id)
@@ -114,7 +115,7 @@ async def start_playback(media_id: int, request: Request, context: Ctx,
 
 @router.post("/{media_id}/playback/finish", response_model=OkResponse,
              summary="End a playback session and mark the title watched")
-async def finish_playback(media_id: int, request: Request, context: Ctx,
+async def finish_playback(media_id: MediaPathId, request: Request, context: Ctx,
                           caller: CallerDep, profile_id: ProfileDep,
                           position_seconds: Annotated[float, Query(ge=0)] = 0.0,
                           session_id: str | None = None) -> OkResponse:
@@ -128,7 +129,7 @@ async def finish_playback(media_id: int, request: Request, context: Ctx,
 
 @router.get("/{media_id}/progress", response_model=ProgressOut,
             summary="Playback position for one title")
-async def get_progress(media_id: int, context: Ctx, profile_id: ProfileDep) -> ProgressOut:
+async def get_progress(media_id: MediaPathId, context: Ctx, profile_id: ProfileDep) -> ProgressOut:
     row = context.history.get_progress(profile_id, media_id)
     if not row:
         return ProgressOut(profile_id=profile_id, media_id=media_id,
@@ -144,7 +145,7 @@ async def get_progress(media_id: int, context: Ctx, profile_id: ProfileDep) -> P
 
 @router.put("/{media_id}/progress", response_model=ProgressOut,
             summary="Report playback progress (sent periodically by the client)")
-async def put_progress(media_id: int, payload: ProgressUpdate, context: Ctx,
+async def put_progress(media_id: MediaPathId, payload: ProgressUpdate, context: Ctx,
                        profile_id: ProfileDep) -> ProgressOut:
     result = context.history.record_progress(
         profile_id, media_id,
@@ -157,13 +158,13 @@ async def put_progress(media_id: int, payload: ProgressUpdate, context: Ctx,
 
 @router.get("/{media_id}/poster", summary="Poster artwork",
             responses={200: {"content": {"image/jpeg": {}}}, 404: {"description": "No poster"}})
-async def poster(media_id: int, context: Ctx, caller: CallerDep) -> Response:
+async def poster(media_id: MediaPathId, context: Ctx, caller: CallerDep) -> Response:
     return _serve_artwork(media_id, "poster_key", context)
 
 
 @router.get("/{media_id}/backdrop", summary="Backdrop artwork",
             responses={200: {"content": {"image/jpeg": {}}}, 404: {"description": "No backdrop"}})
-async def backdrop(media_id: int, context: Ctx, caller: CallerDep) -> Response:
+async def backdrop(media_id: MediaPathId, context: Ctx, caller: CallerDep) -> Response:
     return _serve_artwork(media_id, "backdrop_key", context)
 
 

@@ -192,11 +192,37 @@ def test_sort_key_ignores_leading_articles():
 
 
 def test_compare_titles_orders_the_way_a_reader_expects():
-    """Display order is alphabetical; the stripped key is only a tie-break."""
-    assert compare_titles("The Matrix", "Alien") < 0
-    assert compare_titles("Alien", "The Matrix") > 0
+    """Display order is alphabetical -- plain string order, so "Alien" sorts
+    before "The Matrix".  A library that files "The Matrix" under A is
+    alphabetical the way a phone book is, not the way a shelf is.
+
+    Library listings do not use this: they sort on the stored ``sort_title``
+    column, which *is* the article-stripped key, because an alphabetical index
+    has to live in the database to be usable at 1000+ titles.
+    """
+    assert compare_titles("Alien", "The Matrix") < 0
+    assert compare_titles("The Matrix", "Alien") > 0
     assert compare_titles("A Quiet Place", "Braveheart") < 0
-    assert compare_titles("The Matrix", "the matrix") == 0
+    # The stripped key is only consulted for titles that differ by an article,
+    # and only when the caller asks for it.
+    assert compare_titles("The Matrix", "the matrix") == (
+        compare_titles("The Matrix", "the matrix", ignore_articles=True)
+    )
+    assert compare_titles("Matrix", "The Matrix", ignore_articles=True) != 0
+    assert compare_titles("The Matrix", "The Matrix", ignore_articles=True) == 0
+
+
+def test_the_article_stripped_key_is_what_listings_sort_on():
+    """A stored sort key is what makes A-Z usable: the index is on the
+    stripped value, so "The Matrix" files under M and "A Quiet Place" under Q."""
+    titles = ["The Matrix", "Alien", "A Quiet Place", "Braveheart", "Amadeus"]
+    assert sorted(titles, key=sort_key) == [
+        "Alien", "Amadeus", "Braveheart", "The Matrix", "A Quiet Place",
+    ]
+    # Which is *not* the same as plain alphabetical order: that files "A Quiet
+    # Place" under A.  Both are defensible, and the library chooses one -- the
+    # one an index can serve.
+    assert sorted(titles) != sorted(titles, key=sort_key)
 
 
 def test_title_helpers():

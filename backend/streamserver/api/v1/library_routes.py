@@ -13,6 +13,7 @@ from fastapi import APIRouter, Query, Request
 
 from ..deps import CallerDep, Ctx, ProfileDep, _enforce_limit
 from ..schemas import (
+    MediaPathId,
     MediaOut,
     MediaPage,
     OkResponse,
@@ -91,7 +92,7 @@ async def list_media(
 
 @router.get("/media/{media_id}", response_model=MediaOut,
             summary="One title with full metadata")
-async def get_media(media_id: int, context: Ctx, profile_id: ProfileDep) -> MediaOut:
+async def get_media(media_id: MediaPathId, context: Ctx, profile_id: ProfileDep) -> MediaOut:
     item = context.library.get(profile_id, media_id)
     return MediaOut(**item)
 
@@ -200,14 +201,14 @@ async def favorites(
 
 @router.put("/favorites/{media_id}", response_model=OkResponse,
             summary="Add a title to this profile's favourites")
-async def add_favorite(media_id: int, context: Ctx, profile_id: ProfileDep) -> OkResponse:
+async def add_favorite(media_id: MediaPathId, context: Ctx, profile_id: ProfileDep) -> OkResponse:
     added = context.library.set_favorite(profile_id, media_id, True)
     return OkResponse(detail="Added to favourites." if added else "Already a favourite.")
 
 
 @router.delete("/favorites/{media_id}", response_model=OkResponse,
                summary="Remove a title from this profile's favourites")
-async def remove_favorite(media_id: int, context: Ctx, profile_id: ProfileDep) -> OkResponse:
+async def remove_favorite(media_id: MediaPathId, context: Ctx, profile_id: ProfileDep) -> OkResponse:
     removed = context.library.set_favorite(profile_id, media_id, False)
     return OkResponse(detail="Removed from favourites." if removed else "Not a favourite.")
 
@@ -240,7 +241,7 @@ async def continue_watching(
 
 @router.get("/history/{media_id}", response_model=ProgressOut,
             summary="Playback position for one title")
-async def get_progress(media_id: int, context: Ctx, profile_id: ProfileDep) -> ProgressOut:
+async def get_progress(media_id: MediaPathId, context: Ctx, profile_id: ProfileDep) -> ProgressOut:
     row = context.history.get_progress(profile_id, media_id)
     if not row:
         return ProgressOut(profile_id=profile_id, media_id=media_id,
@@ -256,7 +257,7 @@ async def get_progress(media_id: int, context: Ctx, profile_id: ProfileDep) -> P
 
 @router.put("/history/{media_id}", response_model=ProgressOut,
             summary="Record playback progress")
-async def put_progress(media_id: int, payload: ProgressUpdate, context: Ctx,
+async def put_progress(media_id: MediaPathId, payload: ProgressUpdate, context: Ctx,
                        profile_id: ProfileDep) -> ProgressOut:
     result = context.history.record_progress(
         profile_id, media_id,
@@ -269,7 +270,7 @@ async def put_progress(media_id: int, payload: ProgressUpdate, context: Ctx,
 
 @router.delete("/history/{media_id}", response_model=OkResponse,
                summary="Remove one history entry")
-async def delete_progress(media_id: int, context: Ctx, profile_id: ProfileDep) -> OkResponse:
+async def delete_progress(media_id: MediaPathId, context: Ctx, profile_id: ProfileDep) -> OkResponse:
     removed = context.history.remove_entry(profile_id, media_id)
     if not removed:
         from fastapi import HTTPException
@@ -290,7 +291,7 @@ async def clear_history(context: Ctx, profile_id: ProfileDep) -> OkResponse:
 # ---------------------------------------------------------------------------
 @router.put("/media/{media_id}/rating", response_model=RatingOut,
             summary="Rate a title for this profile")
-async def rate(media_id: int, payload: RatingUpdate, context: Ctx,
+async def rate(media_id: MediaPathId, payload: RatingUpdate, context: Ctx,
                profile_id: ProfileDep) -> RatingOut:
     row = context.ratings.rate(profile_id, media_id, payload.score)
     return RatingOut(media_id=media_id, score=float(row["score"]))
@@ -298,14 +299,14 @@ async def rate(media_id: int, payload: RatingUpdate, context: Ctx,
 
 @router.delete("/media/{media_id}/rating", response_model=OkResponse,
                summary="Remove this profile's rating")
-async def clear_rating(media_id: int, context: Ctx, profile_id: ProfileDep) -> OkResponse:
+async def clear_rating(media_id: MediaPathId, context: Ctx, profile_id: ProfileDep) -> OkResponse:
     context.ratings.clear(profile_id, media_id)
     return OkResponse(detail="Rating removed.")
 
 
 @router.get("/media/{media_id}/rating", response_model=RatingOut,
             summary="This profile's rating for a title")
-async def get_rating(media_id: int, context: Ctx, profile_id: ProfileDep) -> RatingOut:
+async def get_rating(media_id: MediaPathId, context: Ctx, profile_id: ProfileDep) -> RatingOut:
     score = context.ratings.get(profile_id, media_id)
     return RatingOut(media_id=media_id, score=float(score or 0.0))
 

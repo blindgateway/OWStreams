@@ -102,12 +102,6 @@ class AuditLogger:
             detail = dict(detail or {})
             detail.setdefault("media_id", int(media_id))
 
-        # Fold the media id into the detail payload before it is serialised, so
-        # it is actually stored and not only printed to the log line.
-        if media_id is not None:
-            detail = dict(detail or {})
-            detail.setdefault("media_id", int(media_id))
-
         scrubbed = _scrub(detail or {})
         payload = json.dumps(scrubbed, separators=(",", ":"), sort_keys=True)
 

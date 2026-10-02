@@ -2,7 +2,7 @@
 
 Everything here requires an administrator account, and every action is written
 to the audit trail.  There is no path from an ordinary account to any of it:
-the check is a dependency on the router itself, so a route added later cannot
+the check is a dependency *on the router itself*, so a route added later cannot
 forget it.
 
 Import is intentionally exposed over REST *and* reimplemented by the CLI, which
@@ -15,14 +15,15 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Annotated, Any
 
-from fastapi import APIRouter, Body, HTTPException, Query, Request
+from fastapi import APIRouter, Body, Depends, HTTPException, Query, Request
 
 from ...db import repositories as repo
 from ...security import passwords
 from ...security.audit import SecurityEventTypes
 from ...security.paths import MediaRootRegistry, PathViolation
-from ..deps import AdminDep, Ctx, client_ip
+from ..deps import AdminDep, Ctx, client_ip, require_admin
 from ..schemas import (
+    AdminId,
     AdminUserCreate,
     AdminUserOut,
     HealthOut,
@@ -31,11 +32,22 @@ from ..schemas import (
     LibraryRootIn,
     MediaOut,
     MediaPatch,
+    MediaPathId,
     OkResponse,
     PasswordResetRequest,
 )
 
-router = APIRouter(prefix="/admin", tags=["administration"])
+# The router-level dependency is the real guard.  Each handler also takes
+# ``admin: AdminDep`` so the check is visible where it applies (and so
+# ``tests/test_api_admin.py::test_non_admin_cannot_reach_any_admin_route`` can
+# assert on the route inventory rather than on one hand-picked endpoint), but
+# the router dependency is what makes a *newly added* route protected by
+# default rather than by remembering to ask for the parameter.
+router = APIRouter(
+    prefix="/admin",
+    tags=["administration"],
+    dependencies=[Depends(require_admin)],
+)
 
 
 # ---------------------------------------------------------------------------
@@ -89,7 +101,7 @@ async def create_user(payload: AdminUserCreate, context: Ctx, admin: AdminDep,
 
 @router.delete("/users/{user_id}", response_model=OkResponse,
                summary="Delete an account")
-async def delete_user(user_id: int, context: Ctx, admin: AdminDep,
+async def delete_user(user_id: AdminId, context: Ctx, admin: AdminDep,
                       request: Request) -> OkResponse:
     user = repo.get_user(context.db, user_id)
     if not user:
@@ -115,7 +127,7 @@ async def delete_user(user_id: int, context: Ctx, admin: AdminDep,
 
 @router.patch("/users/{user_id}", response_model=AdminUserOut,
               summary="Activate, deactivate or promote an account")
-async def update_user(user_id: int, context: Ctx, admin: AdminDep,
+async def update_user(user_id: AdminId, context: Ctx, admin: AdminDep,
                       payload: dict[str, Any] = Body(...)) -> AdminUserOut:
     allowed = {"is_active", "is_admin"}
     updates = {k: int(bool(v)) for k, v in payload.items() if k in allowed}
@@ -143,7 +155,7 @@ async def update_user(user_id: int, context: Ctx, admin: AdminDep,
 
 @router.post("/users/{user_id}/password", response_model=OkResponse,
              summary="Reset an account's password")
-async def admin_reset_password(user_id: int, caller: AdminDep, context: Ctx,
+async def admin_reset_password(user_id: AdminId, caller: AdminDep, context: Ctx,
                                payload: PasswordResetRequest) -> OkResponse:
     """The admin-namespace spelling of ``POST /auth/password/reset``."""
     context.auth.reset_password(user_id, payload.new_password, actor_id=caller.user_id)
@@ -168,7 +180,7 @@ async def list_all_media(context: Ctx, admin: AdminDep,
 
 @router.patch("/media/{media_id}", response_model=MediaOut,
               summary="Edit a title's metadata")
-async def patch_media(media_id: int, payload: MediaPatch, context: Ctx,
+async def patch_media(media_id: MediaPathId, payload: MediaPatch, context: Ctx,
                       admin: AdminDep) -> MediaOut:
     if not repo.get_media_full(context.db, media_id):
         raise HTTPException(status_code=404, detail="Media not found.")
@@ -183,7 +195,7 @@ async def patch_media(media_id: int, payload: MediaPatch, context: Ctx,
 
 @router.delete("/media/{media_id}", response_model=OkResponse,
                summary="Remove a title from the library (leaves the file)")
-async def delete_media(media_id: int, context: Ctx, admin: AdminDep,
+async def delete_media(media_id: MediaPathId, context: Ctx, admin: AdminDep,
                        delete_file: bool = False) -> OkResponse:
     media = repo.get_media_full(context.db, media_id)
     if not media:

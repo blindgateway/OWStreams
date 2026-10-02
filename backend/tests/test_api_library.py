@@ -64,9 +64,20 @@ def test_media_by_slug(client, library, admin_profile):
 
 def test_unknown_media_is_404(client, admin_profile):
     for path in ("/api/v1/library/media/999999",
-                 "/api/v1/library/media/by-slug/nope",
-                 "/api/v1/library/media/0"):
+                 "/api/v1/library/media/by-slug/nope"):
         assert client.get(path, headers=admin_profile["headers"]).status_code == 404
+
+
+def test_a_non_positive_id_is_rejected_by_validation(client, admin_profile):
+    """An id is an identifier, not a number to look up.  Rejecting it during
+    validation is both cheaper and more honest than returning "not found" for a
+    request that was malformed rather than merely unsatisfied."""
+    for path in ("/api/v1/library/media/0",
+                 "/api/v1/library/media/-1",
+                 "/api/v1/profiles/0"):
+        response = client.get(path, headers=admin_profile["headers"])
+        assert response.status_code == 422, path
+        assert response.json()["error"] == "validation_error"
 
 
 @pytest.mark.parametrize("params,expected_dune", [
