@@ -78,7 +78,7 @@ SessionController::SessionController(QObject *parent)
                 if (operation == QLatin1String("server.check")) {
                     m_lastError = error.message;
                     setState(m_api->baseUrl().isEmpty() ? NoServer : Login);
-                    emit serverReachable(false, QString());
+                    emit serverReachable(false, QString(), false);
                     emit stateChanged();
                     return;
                 }
@@ -89,7 +89,7 @@ SessionController::SessionController(QObject *parent)
     connect(m_api, &ApiClient::serverChecked, this,
             [this](bool reachable, const QString &version, const QString &,
                    bool requiresSetup) {
-                emit serverReachable(reachable, version);
+                emit serverReachable(reachable, version, requiresSetup);
                 if (!reachable) {
                     m_lastError = QStringLiteral("Could not reach that server.");
                     setState(Login);

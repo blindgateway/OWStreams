@@ -167,7 +167,18 @@ void ApiClient::handle(QNetworkReply *reply, const Pending &pending)
     // in one readable place, and adding a screen is one case here rather than
     // a new signal-plumbing exercise.
     if (status >= 200 && status < 300) {
-        if (pending.operation == QLatin1String("auth.login")) {
+        if (pending.operation == QLatin1String("server.check")) {
+            // /api/health is outside the version prefix precisely so a client
+            // can tell "wrong URL" from "wrong API version".  It says nothing
+            // about whether the server has any accounts yet, so the setup flag
+            // comes from /auth/setup on the next hop.
+            m_serverVersion = object.value(QStringLiteral("version")).toString();
+            emit serverChecked(true, m_serverVersion, QString(), false);
+            checkSetupStatus();
+        } else if (pending.operation == QLatin1String("server.setup")) {
+            emit serverChecked(true, m_serverVersion, QString(),
+                               object.value(QStringLiteral("requires_setup")).toBool());
+        } else if (pending.operation == QLatin1String("auth.login")) {
             adoptTokens(object);
             m_lastUsername = pending.body.value(QStringLiteral("username")).toString();
             emit authenticated();
@@ -408,6 +419,19 @@ void ApiClient::checkServer()
     request.verb = "GET";
     request.path = QStringLiteral("/api/health");
     request.operation = QStringLiteral("server.check");
+    QNetworkReply *reply = send(request);
+    connect(reply, &QNetworkReply::finished, this, [this, reply, request] {
+        reply->deleteLater();
+        handle(reply, request);
+    });
+}
+
+void ApiClient::checkSetupStatus()
+{
+    Pending request;
+    request.verb = "GET";
+    request.path = kApiRoot + QStringLiteral("/auth/setup");
+    request.operation = QStringLiteral("server.setup");
     QNetworkReply *reply = send(request);
     connect(reply, &QNetworkReply::finished, this, [this, reply, request] {
         reply->deleteLater();

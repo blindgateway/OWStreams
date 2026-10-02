@@ -50,3 +50,11 @@ target_link_libraries(stream-client PRIVATE
     Qt6::Multimedia
     Qt6::Svg
 )
+
+# Tests are built only when asked for.  A client build on a packaging machine
+# should not need the test sources to be present.
+option(STREAM_BUILD_TESTS "Build the client test suite" OFF)
+if(STREAM_BUILD_TESTS)
+    enable_testing()
+    add_subdirectory(tests)
+endif()

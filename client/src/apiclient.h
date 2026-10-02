@@ -159,6 +159,8 @@ private:
         QUrlQuery query;
     };
 
+    void checkSetupStatus();
+
     QNetworkReply *send(const Pending &request);
     QNetworkReply *send(const Pending &request, const QString &bearerToken);
     void handle(QNetworkReply *reply, const Pending &pending);
@@ -171,6 +173,7 @@ private:
     void applySessionUser(const QJsonObject &payload);
 
     QString m_lastUsername;
+    QString m_serverVersion;
 
     QNetworkAccessManager *m_manager;
     QString m_baseUrl;

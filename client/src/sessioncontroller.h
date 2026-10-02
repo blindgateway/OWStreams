@@ -75,7 +75,10 @@ public:
 signals:
     void stateChanged();
     void profilesChanged();
-    void serverReachable(bool reachable, const QString &version);
+    /// `requiresSetup` is what /auth/setup says, and it is the only thing
+    /// that distinguishes "sign in" from "this server has no accounts".
+    void serverReachable(bool reachable, const QString &version,
+                         bool requiresSetup);
 
 private:
     void setState(State state);

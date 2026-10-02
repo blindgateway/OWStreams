@@ -67,3 +67,4 @@ client/build/
 client/.qt/
 client/android/build/
 client/android/.gradle/
+client/build-test/
