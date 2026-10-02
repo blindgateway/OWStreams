@@ -246,6 +246,8 @@ MIGRATIONS: list[tuple[int, str, str]] = [
         -- ------------------------------------------------------------------
         -- Full-text search
         -- ------------------------------------------------------------------
+        -- contentless: the media table already stores every one of these
+        -- columns, so a second copy on disk would only cost SSD space.
         CREATE VIRTUAL TABLE IF NOT EXISTS media_fts USING fts5(
             title,
             original_title,
@@ -256,6 +258,7 @@ MIGRATIONS: list[tuple[int, str, str]] = [
             cast,
             directors,
             content='',
+            contentless_delete=1,
             tokenize='unicode61 remove_diacritics 2'
         );
 

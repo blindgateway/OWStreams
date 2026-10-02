@@ -54,6 +54,11 @@ class ServerConfig:
     #: Trusted reverse proxies, one per line in TOML.  Only used to honour
     #: X-Forwarded-* when the immediate peer is listed here.
     trusted_proxies: list[str] = field(default_factory=list)
+    #: Hostnames this server answers to.  Empty means "derive from the bind
+    #: address and this machine's name"; a server bound to a routable address
+    #: falls back to accepting any Host header, which is why listing the names
+    #: a LAN or Tailscale deployment is reached by is worth doing.
+    allowed_hosts: list[str] = field(default_factory=list)
     #: Serve over plain HTTP.  Only ever true for a LAN/Tailscale deployment
     #: that already sits behind a tunnel doing TLS termination.
     allow_insecure_transport: bool = False
@@ -210,7 +215,9 @@ _SECTIONS = {
 
 def _coerce(value: Any, target_type: Any, dotted: str) -> Any:
     origin = getattr(target_type, "__origin__", None)
-    if origin is list:
+    # ``list[str]`` arrives as the bare ``list`` class once ``typing.List[str]``
+    # has been resolved, so membership is tested against both forms.
+    if origin is list or target_type is list:
         if isinstance(value, str):
             value = [v.strip() for v in value.split(",") if v.strip()]
         if not isinstance(value, list):
@@ -295,6 +302,22 @@ def _load_env(config: Config, environ: dict[str, str]) -> None:
             setattr(section, field_name, _coerce(environ[env_key], resolved, env_key))
 
 
+def _is_valid_host(value: str) -> bool:
+    """Accept an IPv4/IPv6 literal or a DNS name.  No scheme, path or port."""
+    import ipaddress
+    import re
+
+    if any(ch in value for ch in " /\t\r\n?#@"):
+        return False
+    try:
+        ipaddress.ip_address(value.strip("[]"))
+        return True
+    except ValueError:
+        pass
+    return bool(re.fullmatch(r"(?=.{1,253}$)[A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?"
+                             r"(\.[A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?)*", value))
+
+
 def _validate(config: Config) -> None:
     if not (1 <= config.server.port <= 65535):
         raise ConfigError(f"server.port out of range: {config.server.port}")
@@ -307,6 +330,8 @@ def _validate(config: Config) -> None:
     for path in config.storage.data_dir, config.database_file, config.image_path:
         if not path.is_absolute():
             raise ConfigError(f"storage paths must be absolute: {path}")
+    if config.server.host and not _is_valid_host(config.server.host):
+        raise ConfigError(f"server.host is not a valid address or hostname: {config.server.host!r}")
     if config.metadata.default_provider not in {"local", "tmdb", "imdb", "none"}:
         raise ConfigError(f"unknown metadata provider: {config.metadata.default_provider!r}")
 

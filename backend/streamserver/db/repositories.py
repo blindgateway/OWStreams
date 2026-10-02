@@ -851,8 +851,12 @@ def get_media_streams(db: Database, media_id: int) -> dict[str, list[dict[str, A
 # Full-text search
 # ---------------------------------------------------------------------------
 def rebuild_search_index(db: Database, media_id: int) -> None:
-    """Re-derive one row of the FTS index from the relational tables."""
-    db.execute("DELETE FROM media_fts WHERE rowid = ?", (media_id,))
+    """Re-derive one row of the FTS index from the relational tables.
+
+    ``contentless_delete=1`` lets an old row be removed with a plain DELETE,
+    which a contentless FTS5 table otherwise refuses.  If a SQLite build lacks
+    that option the rebuild falls back to the command set that is available.
+    """
     row = db.query_one(
         """
         SELECT m.id, m.title, m.original_title, m.overview, m.tagline,
@@ -871,16 +875,41 @@ def rebuild_search_index(db: Database, media_id: int) -> None:
         (media_id,),
     )
     if not row:
+        _delete_fts_row(db, media_id)
         return
+
+    values = (
+        int(row["id"]), row["title"] or "", row["original_title"] or "",
+        row["overview"] or "", row["tagline"] or "", row["genres"] or "",
+        row["tags"] or "", row["cast"] or "", row["directors"] or "",
+    )
+    _delete_fts_row(db, int(row["id"]))
     db.execute(
         "INSERT INTO media_fts (rowid, title, original_title, overview, tagline, "
         "genres, tags, cast, directors) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-        (
-            int(row["id"]), row["title"] or "", row["original_title"] or "",
-            row["overview"] or "", row["tagline"] or "", row["genres"] or "",
-            row["tags"] or "", row["cast"] or "", row["directors"] or "",
-        ),
+        values,
     )
+
+
+def _delete_fts_row(db: Database, media_id: int) -> None:
+    """Remove one indexed row, tolerating older SQLite builds.
+
+    The table is created with ``contentless_delete=1`` so this is a plain
+    DELETE.  When that option is not available (SQLite < 3.43) the standard
+    workaround is to insert a row of empty strings before deleting it.
+    """
+    try:
+        db.execute("DELETE FROM media_fts WHERE rowid = ?", (media_id,))
+    except sqlite3.OperationalError as exc:
+        if "contentless" not in str(exc).lower():
+            raise
+        empty = ("",) * 8
+        db.execute(
+            "INSERT INTO media_fts (media_fts, rowid, title, original_title, overview, "
+            "tagline, genres, tags, cast, directors) "
+            "VALUES ('delete', ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (media_id, *empty),
+        )
 
 
 def rebuild_all_search_index(db: Database) -> int:

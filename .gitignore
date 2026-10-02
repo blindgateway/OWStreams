@@ -43,7 +43,6 @@ secrets.toml
 *.swp
 .DS_Store
 
-# ---- Sandbox-created device/shell nodes ----
 /.bashrc
 /.bash_profile
 /.profile
@@ -54,8 +53,11 @@ secrets.toml
 /.ripgreprc
 /.mcp.json
 
-# ---- Agent / IDE control directories (not part of the product) ----
-/.claude
+# ---- Sandbox-provisioned control files (not part of the product) ----
+.claude
+.mcp.json
+.idea
+.vscode
 
 /.idea
 /.vscode
