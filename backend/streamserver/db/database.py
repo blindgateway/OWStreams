@@ -222,6 +222,70 @@ class Database:
             return 0
 
 
+def split_statements(script: str) -> list[str]:
+    """Split a SQL script into statements, respecting strings and comments.
+
+    ``str.split(';')`` is not usable for migrations: a semicolon inside a
+    ``--`` comment or a string literal would truncate the statement.  This
+    scanner tracks single quotes, double quotes, backticks, ``[brackets]``,
+    line comments and block comments, and only breaks on a top-level ``;``.
+    """
+    statements: list[str] = []
+    buffer: list[str] = []
+    index = 0
+    length = len(script)
+
+    while index < length:
+        char = script[index]
+        nxt = script[index + 1] if index + 1 < length else ""
+
+        if char == "-" and nxt == "-":
+            end = script.find("\n", index)
+            end = length if end == -1 else end
+            buffer.append(script[index:end])
+            index = end
+            continue
+
+        if char == "/" and nxt == "*":
+            end = script.find("*/", index + 2)
+            end = length if end == -1 else end + 2
+            buffer.append(script[index:end])
+            index = end
+            continue
+
+        if char in "'\"`[":
+            closing = {"'": "'", '"': '"', "`": "`", "[": "]"}[char]
+            start = index
+            index += 1
+            while index < length:
+                if script[index] == closing:
+                    # Doubled closing quote is an escaped quote inside the literal.
+                    if index + 1 < length and script[index + 1] == closing:
+                        index += 2
+                        continue
+                    index += 1
+                    break
+                index += 1
+            buffer.append(script[start:index])
+            continue
+
+        if char == ";":
+            statement = "".join(buffer).strip()
+            if statement:
+                statements.append(statement)
+            buffer = []
+            index += 1
+            continue
+
+        buffer.append(char)
+        index += 1
+
+    tail = "".join(buffer).strip()
+    if tail:
+        statements.append(tail)
+    return statements
+
+
 def migrate(db: Database, migrations: list[tuple[int, str, str]]) -> int:
     """Apply pending migrations in order.
 
@@ -232,13 +296,12 @@ def migrate(db: Database, migrations: list[tuple[int, str, str]]) -> int:
     """
     db.connection().execute(_MIGRATION_TABLE)
     current = db.user_version()
-    applied = {row["version"] for row in db.query("SELECT version FROM schema_version")}
 
     for version, name, sql in sorted(migrations, key=lambda m: m[0]):
         if version <= current:
             continue
         log.info("applying migration %03d_%s", version, name)
-        statements = [s.strip() for s in sql.split(";") if s.strip()]
+        statements = split_statements(sql)
         with db.write() as conn:
             for statement in statements:
                 conn.execute(statement)
@@ -247,7 +310,6 @@ def migrate(db: Database, migrations: list[tuple[int, str, str]]) -> int:
                 (version, name),
             )
             conn.execute(f"PRAGMA user_version = {int(version)}")
-        applied.add(version)
         current = version
     return current
 

@@ -1,0 +1,61 @@
+# ---- Python ----
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+*.sqlite3
+*.db
+*.db-wal
+*.db-shm
+
+# ---- Qt / C++ client ----
+build/
+build-*/
+*.user
+.qmake6/
+CMakeUserPresets.json
+*_qmlcache.cpp
+.qml/
+qmldir
+*.qmlc
+.qsb/
+*.apk
+*.aab
+
+# ---- Runtime data (never commit) ----
+/data/
+/var/
+*.key
+*.log
+.env
+.env.*
+secrets.toml
+
+# ---- Editors / OS ----
+.idea/
+.vscode/
+*.swp
+.DS_Store
+
+# ---- Sandbox-created device/shell nodes ----
+/.bashrc
+/.bash_profile
+/.profile
+/.zshrc
+/.zprofile
+/.gitconfig
+/.gitmodules
+/.ripgreprc
+/.mcp.json
+
+# ---- Agent / IDE control directories (not part of the product) ----
+/.claude
+
+/.idea
+/.vscode

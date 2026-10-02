@@ -1,0 +1,9 @@
+# Runtime dependencies.  Deliberately minimal: the server must come up on a
+# bare Debian install with nothing but the Python standard library plus these.
+fastapi>=0.110
+uvicorn>=0.27
+python-multipart>=0.0.9
+
+# Development / test only:
+#   pytest>=8.0
+#   httpx>=0.27

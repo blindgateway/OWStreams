@@ -1,0 +1,33 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "streamserver"
+version = "1.0.0"
+description = "Media library, playback and per-profile state server for the Stream client"
+requires-python = ">=3.11"
+dependencies = [
+    "fastapi>=0.110",
+    "uvicorn>=0.27",
+    "python-multipart>=0.0.9",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8.0", "httpx>=0.27", "pytest-asyncio>=0.23"]
+
+[project.scripts]
+streamserver = "streamserver.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["streamserver*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+addopts = "-ra --strict-markers"
+markers = [
+    "slow: tests that take more than a second",
+    "network: tests that bind a socket",
+]
+filterwarnings = ["error::DeprecationWarning:streamserver.*"]
