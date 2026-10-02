@@ -231,7 +231,49 @@ than a lookup for a row that cannot exist.
   server-side. No SQL, no stack traces, no filesystem paths outside the roots.
 - The audit trail scrubs before it writes: sensitive keys by name, and values
   matching token and password-hash patterns by shape. Applied twice, once to the
-  payload and once to the formatted log line.
+  payload and once to the formatted log line. One consequence worth knowing
+  before adding a `detail` key: `token_type` and `session_id` come back as
+  `<redacted>`, because the key pattern matches "token" and "session_id". The
+  playback routes use `typ` and put the session's row id under a name the
+  pattern does not match.
+
+### Which devices were streaming a title
+
+The question an audit trail most obviously has to answer, and — until this was
+built — the one it could not. A `playback_sessions` row recorded the address
+that *started* the session and nothing recorded that a second address joined, so
+a title playing in two places looked exactly like one playing in one.
+
+There is no client-side control that can answer it. `CaptureGuard` protects the
+*window*; once the response is a `StreamingResponse` the bytes are gone, and no
+platform capture API sees a stream that was never screen-captured. The answer
+has to come from the server, and it does:
+
+| Recorded | Where | What it says |
+|---|---|---|
+| `client_ip` per playback session | `playback_sessions` | follows the most recent address that streamed from that session, so one row per device answers the question directly |
+| `devices`, `device_count`, `more_devices` | `media.stream.start` | every address with an open session for this title, uncapped count beside a list capped at eight |
+| `devices`, `device_count`, `more_devices` | `media.stream.denied` with `outcome="ok"` | a stream request that arrived while more than one device held the title |
+| `reason`, `address`, `typ` | every refused stream request | 404, 410, a token bound to another title or profile, 416 — the refusal names the address, because a refusal is evidence precisely because it was refused |
+
+Two rules keep it from becoming noise, and both are enforced by tests rather
+than by review:
+
+- **One device records nothing.** A film is thousands of Range requests; a row
+  each would bury every other event in the table. Only a request that arrives
+  while more than one device holds the title writes a row.
+- **The list is the sessions' addresses, never the request's.** Behind a
+  reverse proxy those are different things: one television and one phone are
+  one `X-Forwarded-For` and two `client_ip` values. Comparing the request's
+  address against the session's is the mistake that made the first version of
+  this silent for every case it was written for — by the time the check ran,
+  the address had already been written into both.
+
+**What this does not tell you.** It is evidence, not proof: a household behind
+one NAT is one address, and a proxy that pools its clients is one address for
+many. It answers "how many addresses has this profile streamed this title
+from", which is the question the data can answer, and it is silent about
+anything the addresses cannot distinguish.
 
 ### CORS and CSRF
 

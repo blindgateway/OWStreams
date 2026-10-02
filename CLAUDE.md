@@ -12,16 +12,16 @@ Then read [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the design and
 
 ## State
 
-- `backend/` — complete, 602 tests passing, no stubs.
-- `client/` — builds and runs, 101 tests passing across 9 suites. Packaging and
+- `backend/` — complete, 607 tests passing, no stubs.
+- `client/` — builds and runs, 113 tests passing across 11 suites. Packaging and
   the screenshot comparison are outstanding; see [docs/ROADMAP.md](docs/ROADMAP.md).
 - `docs/` — complete.
 
 ## Non-negotiables
 
 1. **Run the tests before and after any change.** `cd backend && python -m pytest`
-   (602 tests, about two and a half minutes) and, for the client,
-   `cmake --build build-test && (cd build-test && ctest)` (101 tests, seconds).
+   (607 tests, about two and a half minutes) and, for the client,
+   `cmake --build build-test && (cd build-test && ctest)` (113 tests, seconds).
    **And start the client** — `QT_QPA_PLATFORM=offscreen ./build/stream-client`
    for ten seconds — because a QML layout that cannot work is a runtime warning
    no linter and no unit test produces. If the tests were failing on a clean

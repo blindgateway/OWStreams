@@ -7,9 +7,9 @@ what is true of the code, so you do not have to rediscover it.
 
 ## State of the repository
 
-- `backend/` — **complete and tested.** 602 tests, no failures, no stubs, no
+- `backend/` — **complete and tested.** 607 tests, no failures, no stubs, no
   TODOs in core functionality.
-- `client/` — **builds, runs and is tested.** 101 tests across 9 suites, of
+- `client/` — **builds, runs and is tested.** 113 tests across 11 suites, of
   which 15 run against a real server. Packaging for Windows and Android, and
   the screenshot comparison against the supplied references, are outstanding.
 - `docs/` — complete.
@@ -22,11 +22,11 @@ were once wrong, and a test caught it. **Read the code.**
 
 ```bash
 cd backend
-python -m pytest                       # 602 tests, about 2m30s
+python -m pytest                       # 607 tests, about 2m30s
 
 cd ../client
 cmake -S . -B build-test -G Ninja -DSTREAM_BUILD_TESTS=ON   # once
-cmake --build build-test && (cd build-test && ctest)       # 101 tests, seconds
+cmake --build build-test && (cd build-test && ctest)       # 113 tests, seconds
 
 # And start the application.  qmllint cannot see a QML layout that cannot
 # work: `NavItem.qml` anchored a Row's children as well as the Row, which Qt

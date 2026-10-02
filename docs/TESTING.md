@@ -2,11 +2,11 @@
 
 ```bash
 cd backend
-python -m pytest          # 602 tests, about 2m30s
+python -m pytest          # 607 tests, about 2m30s
 
 cd ../client
 cmake -S . -B build-test -G Ninja && cmake --build build-test
-(cd build-test && ctest)  # 101 tests, seconds
+(cd build-test && ctest)  # 113 tests, seconds
 ```
 
 Every server test runs offline, needs no root, and touches no network. The
@@ -173,6 +173,20 @@ real privilege escalation — see below); `Range: bytes=a-b`, `bytes=a-`,
 → 400; a span over `max_range_span` is refused; a hidden title is 404 and a
 missing file is 410; the path is re-validated at request time; progress
 reporting and completion; `finish`.
+
+**Which devices were streaming a title** — five tests, and one of them is the
+counter-case, because that is the failure that would make the feature useless
+rather than merely noisy: a second device streaming a title another device
+holds records a row naming both addresses; five Range requests from the device
+that *started* it record nothing at all; a refused stream records the address
+that asked; the start event lists the devices already holding the title; and ten
+devices produce nine rows and an eight-entry list on each, with `device_count`
+saying ten and `more_devices` saying the list is truncated. They run against a
+`trusted_proxies` fixture, because without one the "second address" and the test
+client are both `testclient` and the server — correctly — ignores the header.
+See
+[SECURITY.md](SECURITY.md#which-devices-were-streaming-a-title) for what the
+records mean and what they cannot tell you.
 
 ### API — admin
 Every route, happy and unhappy. **A non-admin receives 403 from every route in

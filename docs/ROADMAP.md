@@ -6,7 +6,7 @@ started, and the list says so.
 
 ## Done
 
-**Server — complete and tested (602 tests, no failures).**
+**Server — complete and tested (607 tests, no failures).**
 
 - Layered configuration, validation, and a `0600` config file
 - SQLite schema: 24 tables, 3 migrations, FTS5 search, WAL
@@ -26,9 +26,9 @@ started, and the list says so.
 - Range streaming with the full RFC 9110 grammar
 - HTTP Range streaming, progress reporting, resume
 - 14 CLI subcommands sharing the same services as the API
-- 602 tests: unit, integration, API, security, media, CLI
+- 607 tests: unit, integration, API, security, media, CLI
 
-**Client — builds, runs, and is tested (101 tests across 9 suites).**
+**Client — builds, runs, and is tested (113 tests across 11 suites).**
 
 Qt 6 Quick / QML, C++ core, CMake. Verified on this machine (Qt 6.11.2 devel
 packages, CMake 4.3.0, Ninja); `qmllint` runs as a `POST_BUILD` step and fails
@@ -62,10 +62,16 @@ the build on any warning.
   a progress report every fifteen seconds of *watching*.
 - **Models.** `MediaListModel` (paged, sortable, filtered), `HomeScreenModel`
   (eight rails from one request), `PlaybackController`.
-- **Tests.** 86 unit assertions over eight suites, plus `tst_e2e.cpp`: fifteen
+- **Tests.** 98 unit assertions over ten suites, plus `tst_e2e.cpp`: fifteen
   tests against the *production* server, started by `tests/e2e/harness.py` with
   a real config file, a real database, a real account and a real clip ffmpeg
   generated. It found nine defects the other suites could not.
+- **Capture protection.** `CaptureGuard` keeps the player out of screenshots,
+  screen recordings and taskbar previews on the two platforms whose system
+  enforces it, and reports — in the settings screen, per device — exactly what
+  it got. See
+  [SECURITY.md](SECURITY.md#screen-capture-and-window-thumbnails) for the
+  per-platform table and why X11 gets nothing.
 
 **Documentation — complete.**
 
