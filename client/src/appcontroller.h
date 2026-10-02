@@ -151,6 +151,27 @@ public slots:
     void openPlayer(int mediaId);
     void closePlayer();
 
+    /// Play the next or previous title *in the list the viewer came from*.
+    ///
+    /// The list is the one the current screen is showing -- the library with
+    /// its sort and filters applied, the favourites, the history, or whatever
+    /// a search found -- and not a separate queue.  A person who narrows the
+    /// library to 1994 and starts pressing "next" means "the next one of
+    /// *these*"; a queue built from an unfiltered browse would quietly take
+    /// them somewhere they did not ask to go.  The same model object is read,
+    /// so the grid, the rail and the queue can never disagree about what "next"
+    /// is.
+    ///
+    /// A no-op at either end rather than an error: there is nothing to play,
+    /// and the button is disabled there anyway.
+    void playNextInList();
+    void playPreviousInList();
+
+    /// Where "next" and "previous" would go, or 0 at either end.  Read by the
+    /// player to disable its two buttons -- which it currently has not, so this
+    /// is what makes them honest rather than decorative.
+    Q_INVOKABLE int adjacentMediaId(int offset) const;
+
     void refresh();
     /// Re-fetch the first library page, whatever is on screen.
     ///
@@ -199,6 +220,10 @@ private:
     /// Ask the server for the library page at `m_libraryOffset`.  `append` adds
     /// to what is already on screen instead of replacing it.
     void requestLibraryPage(bool append);
+    /// The model the current screen is showing, or null for one that shows no
+    /// list.  The single place that knows which list "next" means, so the
+    /// player and the queue cannot disagree.
+    MediaListModel *listForCurrentScreen() const;
     void setLastError(const QString &message);
 
     ApiClient *m_api;

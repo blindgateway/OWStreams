@@ -89,6 +89,27 @@ int MediaListModel::rowCount(const QModelIndex &parent) const
     return parent.isValid() ? 0 : int(m_entries.size());
 }
 
+int MediaListModel::rowOfMedia(int mediaId) const
+{
+    if (mediaId <= 0)
+        return -1;
+    // A linear scan, not a lookup table.  A library page is sixty rows and a
+    // press of "next" is not a hot path; a second structure kept in step with
+    // this one is a second thing that can disagree about the order.
+    for (int row = 0; row < m_entries.size(); ++row) {
+        if (m_entries.at(row).values.value(QStringLiteral("id")).toInt() == mediaId)
+            return row;
+    }
+    return -1;
+}
+
+int MediaListModel::mediaIdAt(int row) const
+{
+    if (row < 0 || row >= m_entries.size())
+        return 0;
+    return m_entries.at(row).values.value(QStringLiteral("id")).toInt();
+}
+
 QHash<int, QByteArray> MediaListModel::roleNames() const
 {
     return {

@@ -65,6 +65,14 @@ public:
     explicit MediaListModel(QObject *parent = nullptr);
 
     int rowCount(const QModelIndex &parent = {}) const override;
+
+    /// The row showing `mediaId`, or -1.  What "next" and "previous" are
+    /// resolved against: a person presses them about the film they are
+    /// watching, and the model holds the order they are looking at.
+    Q_INVOKABLE int rowOfMedia(int mediaId) const;
+    /// The media id at `row`, or 0 for a row that is not there.  The pair above,
+    /// named so neither can be used without the other.
+    Q_INVOKABLE int mediaIdAt(int row) const;
     QVariant data(const QModelIndex &index, int role) const override;
     QHash<int, QByteArray> roleNames() const override;
 

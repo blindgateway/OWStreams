@@ -300,6 +300,8 @@ Item {
                         // film, that is the difference between finishing it and
                         // restarting the app.
                         onFullscreenRequested: shell.toggleFullscreen()
+                        onNextRequested: host.controller.playNextInList()
+                        onPreviousRequested: host.controller.playPreviousInList()
                     }
                 }
             }

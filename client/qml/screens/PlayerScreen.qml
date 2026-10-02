@@ -304,7 +304,18 @@ Item {
                         weight: "quiet"
                         text: ""
                         implicitWidth: 44
-                        onClicked: if (screen.controller) screen.controller.seekRelative(-10000)
+                        // The mirror of the forward button, for the same reason:
+                        // a step back through the list when there is one, a
+                        // ten-second rewind when there is not.
+                        enabled: screen.canGoPrevious
+                        onClicked: {
+                            if (!screen.controller)
+                                return
+                            if (screen.canGoPrevious)
+                                screen.previousRequested()
+                            else
+                                screen.controller.seekRelative(-10000)
+                        }
 
                         Icon {
                             anchors.centerIn: parent
@@ -319,14 +330,20 @@ Item {
                         weight: "quiet"
                         text: ""
                         implicitWidth: 44
-                        onClicked: if (screen.controller) screen.controller.seekRelative(10000)
+                        // Seek forward a fixed ten seconds, or step to the next
+                        // title -- the key a person presses at the end of a film
+                        // is the one that means "skip the credits", and
+                        // re-binding it in the transport row is how a player
+                        // ends up with no forward control at all.
+                        enabled: screen.canGoNext
+                        onClicked: if (screen.controller) screen.nextRequested()
 
                         Icon {
                             anchors.centerIn: parent
                             width: 22
                             height: 22
                             name: "forward"
-                            color: Theme.text
+                            color: screen.canGoNext ? Theme.text : Theme.textFaint
                         }
                     }
 
@@ -504,10 +521,12 @@ Item {
             screen.closeRequested()
             break
         case Qt.Key_N:
-            screen.controller.requestNext()
+            if (screen.canGoNext)
+                screen.nextRequested()
             break
         case Qt.Key_P:
-            screen.controller.requestPrevious()
+            if (screen.canGoPrevious)
+                screen.previousRequested()
             break
         default:
             return
@@ -525,6 +544,19 @@ Item {
         function onNextRequested() { screen.nextRequested() }
         function onPreviousRequested() { screen.previousRequested() }
     }
+
+    // Whether "next" and "previous" go anywhere at all.
+    //
+    // The controller answers from the list the viewer came from, so these are
+    // disabled at the first and last title *of that list* -- not of some
+    // unfiltered browse, and not never.  Without this they are decorative: the
+    // brief's next/previous are in the brief because somebody pressing them at
+    // the end of a film expects either the next title or a button that says
+    // there is not one.
+    readonly property bool canGoNext: screen.controller
+        ? screen.controller.adjacentMediaId(1) > 0 : false
+    readonly property bool canGoPrevious: screen.controller
+        ? screen.controller.adjacentMediaId(-1) > 0 : false
 
     Component.onCompleted: {
         // The frames go where this screen draws them.  `videoSink` rather than

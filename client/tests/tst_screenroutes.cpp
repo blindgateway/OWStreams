@@ -223,6 +223,7 @@ private slots:
     void everyScreenInTheShellIsChecked();
     void everyHandlerCallNamesSomethingThisProjectDeclares();
     void thePlayerEmitsFullscreenAndSomethingHandlesIt();
+    void thePlayerEmitsNextAndPreviousAndSomethingHandlesThoseToo();
     void detailScreenReadsTheFieldsTheServerSends();
 };
 
@@ -331,6 +332,38 @@ void ScreenRoutesTest::thePlayerEmitsFullscreenAndSomethingHandlesIt()
                  "television, where a remote has no other way out of a film, "
                  "that is the difference between finishing it and restarting "
                  "the app")));
+}
+
+void ScreenRoutesTest::thePlayerEmitsNextAndPreviousAndSomethingHandlesThoseToo()
+{
+    // Next and previous were the brief's list, and they were *reached* three
+    // times and *performed* zero: the player forwarded the controller's requests
+    // to its own signals, the shell connected none of them, and the transport
+    // row's two buttons were ten-second seeks.  Nobody pressing anything could
+    // have found that out.
+    const QString player =
+        readLines(sourcePath(QStringLiteral("screens/PlayerScreen.qml"))).join(QLatin1Char('\n'));
+    const QString shell = readLines(
+        QDir(qmlRoot()).absoluteFilePath(QStringLiteral("qml/Shell.qml")))
+                              .join(QLatin1Char('\n'));
+
+    QVERIFY2(player.contains(QStringLiteral("signal nextRequested()")),
+             "the player no longer offers a next title");
+    QVERIFY2(player.contains(QStringLiteral("signal previousRequested()")),
+             "the player no longer offers a previous title");
+    QVERIFY2(shell.contains(QStringLiteral("onNextRequested")),
+             "the player emits nextRequested and nothing handles it");
+    QVERIFY2(shell.contains(QStringLiteral("onPreviousRequested")),
+             "the player emits previousRequested and nothing handles it");
+
+    // And the buttons are bound to them, not left as ten-second seeks wearing
+    // the same icons.  `seekRelative(10000)` may not appear beside the forward
+    // button -- it is still reachable by the wheel and the right arrow, which is
+    // where a ten-second seek belongs.
+    QVERIFY2(!player.contains(QStringLiteral("onClicked: if (screen.controller) "
+                                             "screen.controller.seekRelative(10000)")),
+             "the forward button is still a ten-second seek; next/previous "
+             "have to be reachable from the transport, not only from the keys");
 }
 
 void ScreenRoutesTest::detailScreenReadsTheFieldsTheServerSends()

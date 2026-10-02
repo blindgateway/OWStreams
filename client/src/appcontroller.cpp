@@ -326,6 +326,58 @@ void AppController::openPlayer(int mediaId)
     m_api->loadMedia(mediaId);
 }
 
+MediaListModel *AppController::listForCurrentScreen() const
+{
+    switch (m_screen) {
+    case Library:   return m_library;
+    case Favorites: return m_favorites;
+    case History:   return m_history;
+    case Search:    return m_searchResults;
+    // The home screen is eight rails, and a rail is not a list; the detail
+    // screen is one title; settings is not that.  None of them is a queue, and
+    // "next" from them means nothing rather than meaning "some other film".
+    case Home:
+    case Detail:
+    case Settings:
+    case Player:
+        break;
+    }
+    return nullptr;
+}
+
+int AppController::adjacentMediaId(int offset) const
+{
+    const MediaListModel *list = listForCurrentScreen();
+    if (!list || offset == 0)
+        return 0;
+    const int current = m_detailId > 0 ? m_detailId : m_playerMediaId;
+    const int row = list->rowOfMedia(current);
+    if (row < 0)
+        return 0;
+    const int target = row + (offset > 0 ? 1 : -1);
+    if (target < 0 || target >= list->rowCount())
+        return 0;
+    return list->mediaIdAt(target);
+}
+
+void AppController::playNextInList()
+{
+    const int id = adjacentMediaId(1);
+    // Opening rather than replacing in place: the next title needs its own
+    // detail record for the resume offset and the transport, and going back
+    // from it should return to the film that was playing -- which is what
+    // `setScreen` already remembers.
+    if (id > 0)
+        openDetail(id);
+}
+
+void AppController::playPreviousInList()
+{
+    const int id = adjacentMediaId(-1);
+    if (id > 0)
+        openDetail(id);
+}
+
 void AppController::closePlayer()
 {
     m_player->close();
