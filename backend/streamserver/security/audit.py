@@ -85,6 +85,7 @@ class AuditLogger:
         user_id: int | None = None,
         username: str | None = None,
         profile_id: int | None = None,
+        media_id: int | None = None,
         ip_address: str | None = None,
         device_name: str | None = None,
         request_id: str | None = None,
@@ -94,6 +95,18 @@ class AuditLogger:
             return
         if outcome not in {"ok", "denied", "error"}:
             outcome = "error"
+
+        # Fold the media id into the detail payload before it is serialised, so
+        # it is actually stored and not only printed to the log line.
+        if media_id is not None:
+            detail = dict(detail or {})
+            detail.setdefault("media_id", int(media_id))
+
+        # Fold the media id into the detail payload before it is serialised, so
+        # it is actually stored and not only printed to the log line.
+        if media_id is not None:
+            detail = dict(detail or {})
+            detail.setdefault("media_id", int(media_id))
 
         scrubbed = _scrub(detail or {})
         payload = json.dumps(scrubbed, separators=(",", ":"), sort_keys=True)
@@ -122,8 +135,8 @@ class AuditLogger:
             return
 
         self.file_logger.info(
-            "audit action=%s outcome=%s user=%s profile=%s ip=%s detail=%s",
-            action, outcome, username or "-", profile_id or "-",
+            "audit action=%s outcome=%s user=%s profile=%s media=%s ip=%s detail=%s",
+            action, outcome, username or "-", profile_id or "-", media_id or "-",
             _normalise_ip(ip_address) or "-", payload,
         )
 

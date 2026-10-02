@@ -21,6 +21,19 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Annotated
 
+# NOTE: these ``Annotated`` aliases must be imported *by value*.  A string
+# annotation (``caller: "StreamCallerDep"`` under ``from __future__ import
+# annotations``) is never resolved by FastAPI, so the dependency is never wired
+# and FastAPI instead looks for a query parameter called ``caller``.
+from ..deps import (
+    CallerDep,
+    Ctx,
+    ProfileDep,
+    StreamCallerDep,
+    StreamProfileDep,
+    _enforce_limit,
+)
+
 from fastapi import APIRouter, HTTPException, Query, Request, Response, status
 from fastapi.responses import StreamingResponse
 
@@ -29,7 +42,6 @@ from ...media import streaming
 from ...security import tokens
 from ...security.audit import SecurityEventTypes
 from ...security.paths import PathViolation
-from ..deps import Caller, CallerDep, Ctx, ProfileDep, client_ip, _enforce_limit
 from ..schemas import (
     MediaOut,
     OkResponse,
@@ -211,24 +223,35 @@ async def stream(
     media_id: int,
     request: Request,
     context: Ctx,
-    profile_id: ProfileDep,
-    caller: CallerDep,
+    profile_id: StreamProfileDep,
+    caller: StreamCallerDep,
 ) -> Response:
     """Serve media bytes.
 
-    Authorisation: an access or media token in ``Authorization``, plus the
-    profile it belongs to.  The media row is resolved server-side and the
-    resulting path is re-validated against the library roots immediately before
-    the file is opened, so a symlink swapped in after import cannot widen
-    access.
+    Authorisation: an access *or* playback token in ``Authorization``, plus the
+    profile it belongs to.  A playback token additionally has to name this
+    title (and this profile), which is enforced below.
+
+    The media row is resolved server-side and the resulting path is
+    re-validated against the library roots immediately before the file is
+    opened, so a symlink swapped in after import cannot widen access.
     """
-    caller = _authenticate(request, context)
 
     _enforce_limit(context, "stream", f"profile:{profile_id}", request=request)
 
     media = repo.get_media_full(context.db, media_id)
     if not media or media.get("hidden"):
         raise HTTPException(status_code=404, detail="Media not found.")
+
+    # Already known to be gone: answer from the recorded state rather than
+    # opening the file again for every Range request of a missing title.
+    if media.get("integrity_state") == "missing":
+        context.audit.record(
+            SecurityEventTypes.MEDIA_MISSING, outcome="denied",
+            user_id=caller.user_id, profile_id=profile_id, media_id=media_id,
+            ip_address=caller.ip, detail={"reason": "recorded_missing"},
+        )
+        raise HTTPException(status_code=410, detail="This title's file is missing.")
 
     # A media-scoped token is bound to one title; refuse it for another.
     if caller.claims.typ == tokens.TOKEN_TYPE_MEDIA:
@@ -303,33 +326,6 @@ async def stream(
         else status.HTTP_200_OK,
         headers=headers, media_type=headers.get("Content-Type"),
     )
-
-
-def _authenticate(request: Request, context) -> Caller:
-    """Authenticate a streaming request.
-
-    Declared as a dependency on the route rather than resolved by hand, so the
-    streaming endpoint uses exactly the same authentication and revocation
-    checks as every other route.  The range header lives on the request, not
-    in the query string, so it never reaches a log line.
-    """
-    from ..deps import require_caller
-
-    credentials = _token_from(request)
-    return require_caller(request, context, credentials)
-
-
-def _token_from(request: Request):
-    """Build the credentials object ``require_caller`` expects."""
-    from fastapi.security import HTTPAuthorizationCredentials
-
-    header = request.headers.get("authorization")
-    if not header:
-        return None
-    parts = header.split(None, 1)
-    if len(parts) != 2 or parts[0].lower() != "bearer":
-        return None
-    return HTTPAuthorizationCredentials(scheme="Bearer", credentials=parts[1].strip())
 
 
 def _session_for(context, caller, profile_id: int, media_id: int) -> str | None:

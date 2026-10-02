@@ -137,12 +137,19 @@ def _enforce_limit(
     )
 
 
-def require_caller(
+def require_caller_for(
     request: Request,
-    context: Ctx,
-    credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(bearer_scheme)] = None,
+    context: AppContext,
+    credentials: HTTPAuthorizationCredentials | None,
+    *,
+    allow_media_token: bool = False,
 ) -> Caller:
-    """Authenticate a request.  Also the single place that checks revocation."""
+    """Authenticate a request.  Also the single place that checks revocation.
+
+    A *playback* token is refused here: it authorises exactly one thing --
+    streaming the title it names -- and every other route must say so rather
+    than quietly treating it as a session token.
+    """
     if credentials is None or not credentials.credentials:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -179,6 +186,22 @@ def require_caller(
             headers={"WWW-Authenticate": "Bearer"},
         )
 
+    # A playback token authorises exactly one thing: streaming one title to one
+    # profile.  It is a *different kind* of credential, so anything that needs a
+    # session -- reading the library, reaching the admin API -- must refuse it
+    # rather than silently treating it as a session token.
+    if claims.typ == tokens.TOKEN_TYPE_MEDIA and not allow_media_token:
+        context.audit.record(
+            SecurityEventTypes.TOKEN_REJECTED, outcome="denied",
+            user_id=claims.sub, ip_address=ip,
+            detail={"reason": "media_token_used_for_session_api"},
+        )
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="This is a playback token. It only authorises streaming the "
+                   "title it was issued for.",
+        )
+
     # Explicit logout kills the jti immediately; short token lifetimes make this
     # a belt-and-braces measure for the remaining seconds.
     if context.db.query_one(
@@ -208,7 +231,35 @@ def require_caller(
                   request_id=getattr(request.state, "request_id", ""))
 
 
-CallerDep = Annotated[Caller, Depends(require_caller)]
+def require_caller(
+    request: Request,
+    context: Ctx,
+    credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(bearer_scheme)] = None,
+) -> Caller:
+    """Authenticate any request that needs a *session* token."""
+    return require_caller_for(request, context, credentials)
+
+
+def require_stream_caller(
+    request: Request,
+    context: Ctx,
+    credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(bearer_scheme)] = None,
+) -> Caller:
+    """Authenticate a streaming request, accepting a playback token.
+
+    The streaming endpoint, and only it, accepts a playback token.  Every other
+    check is the same one every other route goes through; the token-scope rule
+    is skipped so the streaming handler can apply its own, stricter binding
+    (this title, this profile).
+
+    Declared synchronously on purpose: an async dependency is not resolved in
+    a worker thread, so calling :func:`require_caller_for` from inside one would
+    make FastAPI try to satisfy its parameters from the query string.
+    """
+    return require_caller_for(request, context, credentials,
+                              allow_media_token=True)
+
+
 
 
 def require_admin(caller: CallerDep) -> Caller:
@@ -220,7 +271,6 @@ def require_admin(caller: CallerDep) -> Caller:
     return caller
 
 
-AdminDep = Annotated[Caller, Depends(require_admin)]
 
 
 def require_profile(
@@ -234,6 +284,16 @@ def require_profile(
     The profile may be named by the ``X-Profile-Id`` header or, when absent,
     taken from the token.  Either way it must belong to the caller.
     """
+    return _resolve_profile(request, context, caller, x_profile_id)
+
+
+def _resolve_profile(
+    request: Request,
+    context: AppContext,
+    caller: Caller,
+    x_profile_id: str | None,
+) -> int:
+    """Validate the acting profile and check it belongs to the caller."""
     profile_id: int | None = None
     if x_profile_id:
         try:
@@ -249,14 +309,10 @@ def require_profile(
     try:
         resolved = context.profiles.require(caller.user_id, profile_id)
     except ProfileError as exc:
-        status_code = exc.status_code
-        raise HTTPException(status_code=status_code, detail=str(exc)) from exc
+        raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
 
     request.state.profile_id = resolved
     return resolved
-
-
-ProfileDep = Annotated[int, Depends(require_profile)]
 
 
 def require_media(profile_id: ProfileDep, media_id: int, context: Ctx) -> dict:
@@ -269,6 +325,23 @@ def require_media(profile_id: ProfileDep, media_id: int, context: Ctx) -> dict:
             status_code=status.HTTP_404_NOT_FOUND, detail="Media not found."
         )
     return media
+
+
+def require_stream_profile(
+    request: Request,
+    context: Ctx,
+    caller: StreamCallerDep,
+    x_profile_id: Annotated[str | None, Header(alias="X-Profile-Id")] = None,
+) -> int:
+    """:func:`require_profile` for the streaming route.
+
+    It resolves the caller through ``StreamCallerDep`` rather than
+    ``CallerDep``.  With a shared alias, FastAPI's dependency cache hands the
+    *first* resolved caller to both -- so the stream route ended up with a
+    ``Caller`` authenticated as a session token while believing it had accepted
+    a playback token.  Two aliases keep the two credential kinds apart.
+    """
+    return _resolve_profile(request, context, caller, x_profile_id)
 
 
 def require_uncapped(caller: CallerDep) -> Caller:
@@ -286,8 +359,24 @@ def require_uncapped(caller: CallerDep) -> Caller:
     return caller
 
 
-UncappedDep = Annotated[Caller, Depends(require_uncapped)]
 
 
 def new_request_id() -> str:
     return secrets.token_hex(8)
+
+
+# ---------------------------------------------------------------------------
+# Dependency aliases
+#
+# Defined at the end, once every function above exists, and imported *by
+# value* at the call sites.  Under ``from __future__ import annotations`` a
+# string annotation would never be resolved by FastAPI: the dependency would
+# silently not be wired, and FastAPI would instead look for a query parameter
+# with the parameter's name.
+# ---------------------------------------------------------------------------
+CallerDep = Annotated[Caller, Depends(require_caller)]
+StreamCallerDep = Annotated[Caller, Depends(require_stream_caller)]
+AdminDep = Annotated[Caller, Depends(require_admin)]
+ProfileDep = Annotated[int, Depends(require_profile)]
+StreamProfileDep = Annotated[int, Depends(require_stream_profile)]
+UncappedDep = Annotated[Caller, Depends(require_uncapped)]
