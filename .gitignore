@@ -61,3 +61,9 @@ secrets.toml
 
 /.idea
 /.vscode
+
+# ---- Client build output (paths) ----
+client/build/
+client/.qt/
+client/android/build/
+client/android/.gradle/
