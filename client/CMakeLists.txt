@@ -20,6 +20,8 @@ qt_add_executable(stream-client
     src/credentialstore.h
     src/sessioncontroller.cpp
     src/sessioncontroller.h
+    src/librarymodel.cpp
+    src/librarymodel.h
 )
 
 target_compile_definitions(stream-client PRIVATE
