@@ -1541,6 +1541,52 @@ def get_playback_session(db: Database, session_id: str) -> dict[str, Any] | None
     )
 
 
+def note_playback_address(db: Database, session_id: str, address: str) -> bool:
+    """Record `address` as one this playback session has streamed from.
+
+    Returns whether the row changed.  The session's ``client_ip`` is where it
+    was *started*; this makes it the address of the most recent request from
+    somewhere else, so the next request from a *third* address can be told apart
+    from the next request from the first -- which is the difference between one
+    device on a load balancer and two devices on a network.
+
+    Compares before writing, because a film is thousands of Range requests and
+    all but the first of them is the same address.
+    """
+    result = db.execute(
+        "UPDATE playback_sessions SET client_ip = ? WHERE id = ? AND client_ip IS NOT ?",
+        (address, session_id),
+    )
+    return result.changes > 0
+
+
+def playback_addresses(db: Database, profile_id: int, media_id: int) -> list[str]:
+    """Every address with an open playback session for this title, newest first.
+
+    Distinct, capped by the caller.  `MAX(started_at)` rather than
+    `MIN(started_at)` because the newest session is the one somebody is
+    watching now, and it is the one worth naming.
+    """
+    rows = db.query(
+        "SELECT client_ip, MAX(started_at) AS last_seen FROM playback_sessions "
+        "WHERE media_id = ? AND profile_id = ? AND ended = 0 "
+        "AND client_ip IS NOT NULL AND client_ip != '' "
+        "GROUP BY client_ip ORDER BY last_seen DESC, client_ip",
+        (media_id, profile_id),
+    )
+    return [row["client_ip"] for row in rows]
+
+
+def count_playback_addresses(db: Database, profile_id: int, media_id: int) -> int:
+    """How many distinct addresses, uncapped -- so a capped list can say so."""
+    return int(db.scalar(
+        "SELECT COUNT(DISTINCT client_ip) FROM playback_sessions "
+        "WHERE media_id = ? AND profile_id = ? AND ended = 0 "
+        "AND client_ip IS NOT NULL AND client_ip != ''",
+        (media_id, profile_id),
+    ) or 0)
+
+
 def prune_playback_sessions(db: Database, keep_hours: int = 6) -> int:
     result = db.execute(
         "DELETE FROM playback_sessions WHERE last_seen_at < datetime('now', ?)",

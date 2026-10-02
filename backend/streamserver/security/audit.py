@@ -40,6 +40,12 @@ _VALUE_PATTERNS = (
 MAX_DETAIL_KEYS = 24
 MAX_DETAIL_VALUE = 200
 
+#: Distinct addresses kept in one detail's ``devices`` list.  Two people watched
+#: one film on one evening; the audit answer is "these addresses, in the order
+#: they appeared, until they repeat" -- not a table with one row per Range
+#: request.
+MAX_DETAIL_DEVICES = 8
+
 
 def _scrub(value: Any, depth: int = 0) -> Any:
     if depth > 4:
@@ -66,6 +72,35 @@ def _scrub(value: Any, depth: int = 0) -> Any:
     if isinstance(value, (list, tuple, set)):
         return [_scrub(item, depth + 1) for item in list(value)[:MAX_DETAIL_KEYS]]
     return _scrub(str(value), depth + 1)
+
+
+def _with_device_history(detail: dict[str, Any]) -> dict[str, Any]:
+    """Add ``detail["address"]`` to ``detail["devices"]``, keeping the order.
+
+    Two addresses streaming one title is the question an audit log exists to
+    answer, and ``devices`` is where the answer is kept: the distinct addresses
+    this event has been seen from, oldest first, capped at
+    :data:`MAX_DETAIL_DEVICES`.  A *new* address at the cap replaces the
+    oldest -- an address is evidence, and a three-year-old playback session is
+    not -- while a repeat does nothing, so the thousands of Range requests one
+    film generates add nothing but a lookup.
+    """
+    address = detail.get("address")
+    if not isinstance(address, str) or not address:
+        return detail
+
+    devices = detail.get("devices")
+    history = list(devices) if isinstance(devices, list) else []
+    if address in history:
+        return detail
+
+    if len(history) >= MAX_DETAIL_DEVICES:
+        history = history[-(MAX_DETAIL_DEVICES - 1):]
+    history.append(address)
+
+    result = dict(detail)
+    result["devices"] = history
+    return result
 
 
 class AuditLogger:
@@ -102,7 +137,8 @@ class AuditLogger:
             detail = dict(detail or {})
             detail.setdefault("media_id", int(media_id))
 
-        scrubbed = _scrub(detail or {})
+        detail = _with_device_history(detail or {})
+        scrubbed = _scrub(detail)
         payload = json.dumps(scrubbed, separators=(",", ":"), sort_keys=True)
 
         try:

@@ -8,6 +8,7 @@ rules that keep one title's token from opening another.
 from __future__ import annotations
 
 import hashlib
+import json
 from pathlib import Path
 
 import pytest
@@ -440,3 +441,228 @@ def test_a_stream_is_not_logged_one_line_per_chunk(client, library, admin_profil
         f"each streaming request also produced its own line, which is what "
         f"fills the disk on a feature film: {per_request}"
     )
+
+
+# ---------------------------------------------------------------------------
+# Two addresses, one profile
+# ---------------------------------------------------------------------------
+# "This title is being streamed from somewhere it was not started from" is the
+# question an audit trail is for, and nothing in the server answered it: the
+# `client_ip` on a playback-session row recorded only who *started* it, so a
+# second address joining an in-progress film left no trace at all.  These four
+# tests are that trace.
+
+@pytest.fixture
+def trusting_proxy(app, client):
+    """Let ``X-Forwarded-For`` decide the caller's address.
+
+    Without this the test client and the "second address" are both
+    ``testclient``, and the code under test -- correctly -- ignores the header
+    from an untrusted peer.  Set on the *config object*, not re-created, so the
+    limiter still buckets by address and the two-address tests do not spend
+    somebody else's rate limit.
+    """
+    context = app.state.context
+    context.config.server.trusted_proxies = ["testclient"]
+    return context
+
+
+def _start_from(client, media_id, headers, address: str):
+    """Open a playback session as if the request had arrived from `address`.
+
+    A *session*, not a stream request: a session row is one device, and the
+    server's notion of "which devices is this title playing on" is one row per
+    device.  Reusing one session for ten different addresses -- which is what a
+    single streaming connection seeks through -- would be one device that moved,
+    and the address history would correctly show one address at a time.
+    """
+    request_headers = dict(headers)
+    request_headers["X-Forwarded-For"] = address
+    response = client.post(f"/api/v1/media/{media_id}/playback",
+                           headers=request_headers)
+    assert response.status_code == 200, response.text
+    return response.json()["playback_token"]
+
+
+def _stream_from(client, media_id, headers, address: str | None = None):
+    request_headers = dict(headers)
+    if address:
+        request_headers["X-Forwarded-For"] = address
+    return client.get(f"/api/v1/stream/{media_id}", headers=request_headers)
+
+
+def _audit_rows(app, action: str) -> list[dict]:
+    rows = app.state.context.db.query(
+        "SELECT ip_address, device_name, detail FROM audit_log "
+        "WHERE action = ? ORDER BY id",
+        (action,),
+    )
+    return [
+        {"ip": row["ip_address"], "device": row["device_name"],
+         "detail": json.loads(row["detail"] or "{}")}
+        for row in rows
+    ]
+
+
+def test_a_second_device_streaming_the_same_title_is_recorded(client, app, library,
+                                                               admin_profile,
+                                                               trusting_proxy):
+    """The case the feature exists for, in the shape it actually happens.
+
+    One profile, one title, two devices: a television and a phone, or a second
+    browser.  Both start playback, and the second one's row has to name both
+    addresses -- because "this title is playing in two places" is the question
+    an audit trail is for, and before this it was not recorded anywhere.
+    """
+    media_id = library[0]["id"]
+    headers = admin_profile["headers"]
+    token = _start_from(client, media_id, headers, "203.0.113.7")
+    second = _start_from(client, media_id, headers, "203.0.113.8")
+
+    stream = {"Authorization": f"Bearer {second}",
+              "X-Profile-Id": str(admin_profile["id"])}
+    assert _stream_from(client, media_id, stream, "203.0.113.8").status_code == 200
+
+    rows = [r for r in _audit_rows(app, "media.stream.denied")
+            if r["detail"].get("reason") == "second_address_streaming"]
+    assert rows, "a second device streaming the same title left no audit row"
+
+    latest = rows[-1]
+    assert latest["ip"] == "203.0.113.8"
+    assert latest["detail"]["address"] == "203.0.113.8"
+    assert latest["detail"]["device_count"] == 2
+    # The address it did *not* come from is on the list beside it rather than
+    # replaced by it: two addresses is the finding, one address is the normal
+    # case, and a list that only ever holds the current one proves nothing.
+    assert "203.0.113.7" in latest["detail"]["devices"]
+    assert "203.0.113.8" in latest["detail"]["devices"]
+
+    # And the first device's token still works, so this is two devices rather
+    # than a lockout.
+    assert _stream_from(client, media_id,
+                        {"Authorization": f"Bearer {token}",
+                         "X-Profile-Id": str(admin_profile["id"])},
+                        "203.0.113.7").status_code == 200
+
+
+def test_range_requests_from_the_known_address_are_not_recorded(client, app, library,
+                                                                admin_profile,
+                                                                trusting_proxy):
+    """One film is thousands of Range requests; none of them is evidence.
+
+    The counter-case to the test above, and the one that would make the feature
+    useless: without it, every seek of every film writes a row, and the audit
+    table becomes a log of playback mechanics rather than of who watched what.
+    """
+    media_id = library[0]["id"]
+    headers = admin_profile["headers"]
+    token = _start_from(client, media_id, headers, "203.0.113.7")
+    stream = {"Authorization": f"Bearer {token}",
+              "X-Profile-Id": str(admin_profile["id"])}
+
+    for _ in range(5):
+        assert _stream_from(client, media_id, stream, "203.0.113.7").status_code == 200
+
+    rows = [r for r in _audit_rows(app, "media.stream.denied")
+            if r["detail"].get("reason") == "second_address_streaming"]
+    assert rows == [], (
+        f"five Range requests from the address that started playback each wrote "
+        f"an audit row: {rows}"
+    )
+
+
+def test_a_refused_stream_names_the_address_that_asked(client, app, library,
+                                                       admin_profile,
+                                                       trusting_proxy):
+    """A refusal is evidence *because* it was refused.
+
+    A playback token is bound to one title; presenting it for another is either
+    a bug or a probe, and either way the audit row has to name the address that
+    made the request rather than only the account that owns the token.
+    """
+    media_id = library[0]["id"]
+    other = library[1]["id"]
+    headers = admin_profile["headers"]
+    token = _start_from(client, media_id, headers, "203.0.113.7")
+    stream = {"Authorization": f"Bearer {token}",
+              "X-Profile-Id": str(admin_profile["id"])}
+
+    response = _stream_from(client, other, stream, "198.51.100.4")
+    assert response.status_code == 403, response.text
+
+    rows = _audit_rows(app, "media.stream.denied")
+    assert rows, "a 403 wrote no audit row"
+    assert rows[-1]["ip"] == "198.51.100.4"
+    assert rows[-1]["detail"]["reason"] == "playback_token_bound_to_other_media"
+    # The token's own media id is evidence; the token is not, and never is.
+    assert rows[-1]["detail"]["minted_for_media_id"] == media_id
+
+
+def test_the_start_event_lists_the_devices_already_streaming(client, app, library,
+                                                             admin_profile,
+                                                             trusting_proxy):
+    """The answer is readable without replaying the whole request history.
+
+    Starting the same title twice -- from a second address -- puts both on the
+    start event, which is the row an administrator looks at first.
+    """
+    media_id = library[0]["id"]
+    headers = admin_profile["headers"]
+    token = _start_from(client, media_id, headers, "203.0.113.7")
+    stream = {"Authorization": f"Bearer {token}",
+              "X-Profile-Id": str(admin_profile["id"])}
+
+    assert _stream_from(client, media_id, stream, "203.0.113.7").status_code == 200
+    _start_from(client, media_id, headers, "203.0.113.8")
+
+    starts = _audit_rows(app, "media.stream.start")
+    assert starts, "no playback start was recorded"
+    devices = starts[-1]["detail"]["devices"]
+    assert "203.0.113.7" in devices and "203.0.113.8" in devices, (
+        f"the start event does not list both addresses: {devices}"
+    )
+
+
+def test_each_address_is_recorded_even_though_the_list_is_capped(client, app, library,
+                                                                  admin_profile,
+                                                                  trusting_proxy):
+    """A capped list must not become a capped *record*.
+
+    Ten devices on one profile and one title produces ten rows and an eight-entry
+    list on each.  The list says it is truncated; the `ip_address` column says
+    who it was.  Both matter -- a truncated list that hid the ninth and tenth
+    addresses would be the silent truncation this whole feature must not be.
+    """
+    from streamserver.security import audit as audit_module
+
+    media_id = library[0]["id"]
+    headers = admin_profile["headers"]
+
+    seen: list[str] = []
+    for index in range(audit_module.MAX_DETAIL_DEVICES + 2):
+        address = f"198.51.100.{index + 1}"
+        token = _start_from(client, media_id, headers, address)
+        stream = {"Authorization": f"Bearer {token}",
+                  "X-Profile-Id": str(admin_profile["id"])}
+        assert _stream_from(client, media_id, stream, address).status_code == 200
+        seen.append(address)
+
+    rows = [r for r in _audit_rows(app, "media.stream.denied")
+            if r["detail"].get("reason") == "second_address_streaming"]
+    recorded = [row["ip"] for row in rows]
+    # The first device is the normal case and records nothing -- one device is
+    # not a finding -- so the row for the second device is the first one, and
+    # there is one row per device after that.
+    assert recorded == seen[1:], (
+        f"{len(seen)} distinct devices produced {len(recorded)} rows: {recorded}"
+    )
+
+    # Every row carries a list no longer than the cap, and the real count
+    # beside it -- so a reader can tell "eight of ten" from "all eight".
+    assert all(len(row["detail"]["devices"]) <= audit_module.MAX_DETAIL_DEVICES
+               for row in rows)
+    assert rows[-1]["detail"]["device_count"] == len(seen)
+    assert rows[-1]["detail"]["more_devices"] is True
+    # The first device is legitimately uncapped: one device really was all
+    # there was.  Saying otherwise on the second would be noise.
+    assert rows[0]["detail"]["more_devices"] is False
