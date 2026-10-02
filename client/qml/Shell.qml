@@ -62,6 +62,22 @@ Item {
         }
     }
 
+    /// Full screen, and back out of it.
+    ///
+    /// A toggle rather than "go full screen", because the same key leaves: a
+    /// viewer who has just gone full screen on a television has no other way
+    /// back if the only implementation is one-way.  `Window.FullScreen` is the
+    /// only visibility that means it; `Window.Maximized` is not full screen and
+    /// a remote's "home" button will not leave it either.
+    function toggleFullscreen() {
+        const window = Responsive.window
+        if (!window || typeof window.visibility === "undefined")
+            return
+        window.visibility = (window.visibility === Window.FullScreen)
+                               ? Window.Windowed
+                               : Window.FullScreen
+    }
+
     // -- sidebar (desktop and tablet) ------------------------------------
     Rectangle {
         id: sidebar
@@ -277,6 +293,13 @@ Item {
                         guard: host.controller.captureGuard
                         media: host.controller.detail
                         onCloseRequested: host.controller.back()
+                        // F and Escape, from the player's own key handler.
+                        // Without this the player offers fullscreen and nothing
+                        // performs it, so both keys are dead -- and on a
+                        // television, where a remote has no other way out of a
+                        // film, that is the difference between finishing it and
+                        // restarting the app.
+                        onFullscreenRequested: shell.toggleFullscreen()
                     }
                 }
             }

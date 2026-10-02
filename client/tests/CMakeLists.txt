@@ -50,7 +50,8 @@ set(STREAM_MODEL_SOURCES
 )
 
 foreach(suite credentialaccess credentialstore apierror apiclient librarymodel
-             appcontroller playbackcontroller sessioncontroller captureguard timetext)
+             appcontroller playbackcontroller sessioncontroller captureguard timetext
+             screenroutes)
     if(suite STREQUAL "librarymodel" OR suite STREQUAL "appcontroller"
        OR suite STREQUAL "playbackcontroller" OR suite STREQUAL "timetext")
         set(suite_sources ${STREAM_MODEL_SOURCES})
@@ -60,7 +61,22 @@ foreach(suite credentialaccess credentialstore apierror apiclient librarymodel
     if(suite STREQUAL "apiclient")
         list(APPEND suite_sources ${STREAM_FAKE_SERVER})
     endif()
+    # `screenroutes` reads the QML *sources* and the headers, so it links none
+    # of the client: no network stack, no media backend, and nothing that
+    # needs a platform plugin.  What it needs instead is the path to the
+    # sources, which is a compile definition rather than a target property --
+    # hence the variable rather than a `target_compile_definitions` call here,
+    # which would run before the target exists.
+    if(suite STREQUAL "screenroutes")
+        set(suite_sources "")
+        set(suite_definitions
+            STREAM_TESTCASE_SOURCEDIR="${CMAKE_CURRENT_SOURCE_DIR}")
+    endif()
     qt_add_executable(stream-client-tests-${suite} tst_${suite}.cpp ${suite_sources})
+    if(suite_definitions)
+        target_compile_definitions(stream-client-tests-${suite} PRIVATE
+            ${suite_definitions})
+    endif()
     target_include_directories(stream-client-tests-${suite} PRIVATE ../src)
     # Qt6::Multimedia for every suite, not just the player one: the model set
     # includes playbackcontroller.cpp, whose include of <QAudioOutput> is a

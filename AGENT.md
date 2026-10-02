@@ -9,7 +9,7 @@ what is true of the code, so you do not have to rediscover it.
 
 - `backend/` — **complete and tested.** 607 tests, no failures, no stubs, no
   TODOs in core functionality.
-- `client/` — **builds, runs and is tested.** 116 tests across 11 suites, of
+- `client/` — **builds, runs and is tested.** 122 tests across 12 suites, of
   which 15 run against a real server. Packaging for Windows and Android, and
   the screenshot comparison against the supplied references, are outstanding.
 - `docs/` — complete.
@@ -26,7 +26,7 @@ python -m pytest                       # 607 tests, about 2m30s
 
 cd ../client
 cmake -S . -B build-test -G Ninja -DSTREAM_BUILD_TESTS=ON   # once
-cmake --build build-test && (cd build-test && ctest)       # 116 tests, seconds
+cmake --build build-test && (cd build-test && ctest)       # 122 tests, seconds
 
 # And start the application.  qmllint cannot see a QML layout that cannot
 # work: `NavItem.qml` anchored a Row's children as well as the Row, which Qt

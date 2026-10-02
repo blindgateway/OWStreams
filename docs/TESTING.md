@@ -6,7 +6,7 @@ python -m pytest          # 607 tests, about 2m30s
 
 cd ../client
 cmake -S . -B build-test -G Ninja && cmake --build build-test
-(cd build-test && ctest)  # 116 tests, seconds
+(cd build-test && ctest)  # 122 tests, seconds
 ```
 
 Every server test runs offline, needs no root, and touches no network. The
@@ -63,6 +63,7 @@ client/tests/
 ├── tst_playbackcontroller.cpp   the player's rules and its progress throttle
 ├── tst_captureguard.cpp         that the guard reports only what it applied
 ├── tst_timetext.cpp             that the two languages agree on a runtime
+├── tst_screenroutes.cpp         that every screen calls something that exists
 └── e2e/                         harness.py, ServerFixture: the real server
 ```
 
@@ -399,7 +400,12 @@ Stated plainly, because a test suite that pretends is worse than none.
 
 - **QML behaviour.** The C++ behind the client is tested — the session machine,
   the models, the player, the bytes on the wire, and the whole app against a
-  real server. The QML is checked three ways, and only one of them is a test:
+  real server. `tst_screenroutes.cpp` reads each screen's source and checks that
+  every method its handlers call is one this project declares, that the shell
+  handles every signal the player emits, and that the detail screen reads the
+  fields the server sends — which is how an unwired `fullscreenRequested` was
+  found, and is a *reference* check rather than a rendering one. The QML is
+  otherwise checked three ways, and only one of them is a test:
   `qmllint` on every build, which is a syntax, type and property check;
   *running* the application and reading what Qt logged, which is how six more
   defects were found — `Icon.qml`'s `Connections` bound to the wrong item, so
