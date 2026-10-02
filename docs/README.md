@@ -113,11 +113,13 @@ A few things this project will not do, because they would be worse than the
 alternative:
 
 - **No external DRM, no anti-piracy service.** The client keeps credentials in
-  the platform's secure storage and does not log them. Screenshot blocking is
-  listed but not yet written, and even once it is it does **not** make the
-  content unrecordable, because no client-side code can; the limits are
-  documented rather than papered over. See
-  [SECURITY.md](SECURITY.md#what-this-system-does-not-protect-against).
+  the platform's secure storage and does not log them. It keeps the player out
+  of screenshots and taskbar thumbnails on the two platforms whose system
+  enforces it — Windows 10 2004+ and Android — and on X11 and Wayland it
+  enforces nothing, because nothing there can be enforced without breaking
+  playback. None of it makes the content unrecordable, because no client-side
+  code can; the limits are documented rather than papered over. See
+  [SECURITY.md](SECURITY.md#screen-capture-and-window-thumbnails).
 - **No microservices.** One Python process, one SQLite file. At ten concurrent
   users on four cores, a message queue would add failure modes and no capacity.
 - **No cloud services, no accounts, no telemetry.** It runs on your hardware and

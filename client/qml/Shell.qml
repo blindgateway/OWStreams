@@ -218,6 +218,10 @@ Item {
                                      ? host.describeServer(shell.session) : ""
                         credentialBackend: shell.session
                             ? shell.session.credentialBackend : "none"
+                        captureReport: host.controller.captureGuard
+                            ? host.controller.captureGuard.platformReport : ""
+                        captureApplied: host.controller.captureGuard
+                            ? host.controller.captureGuard.applied : []
                         currentProfileId: shell.session ? shell.session.profileId : 0
 
                         onRenameProfileRequested: function (id, name) {
@@ -270,6 +274,7 @@ Item {
                         visible: host.controller.screen === AppController.Player
                         controller: host.controller.player
                         api: App.api
+                        guard: host.controller.captureGuard
                         media: host.controller.detail
                         onCloseRequested: host.controller.back()
                     }

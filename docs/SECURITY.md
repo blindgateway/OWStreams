@@ -261,6 +261,53 @@ ordinary settings. Where no keychain exists the client **refuses to persist**
 rather than falling back to a file — a remembered login is a convenience, and
 downgrading it to plaintext trades a property the user never agreed to give up.
 
+### Screen capture and window thumbnails
+
+The client asks the platform to keep the player out of screenshots, screen
+recordings and taskbar previews, and reports on screen what it actually got.
+`CaptureGuard` (`client/src/captureguard.cpp`) is applied by `PlayerScreen`
+when it becomes visible and released when it closes, and
+`AppController.captureGuard` is what the settings screen reads — one object, so
+the summary sentence and the itemised list cannot disagree.
+
+| Platform | Applied | Enforced |
+|---|---|---|
+| Windows 10 2004+ | `WDA_EXCLUDEFROMCAPTURE` on the window handle | yes |
+| Windows 10 before 2004 | nothing — the flag is a no-op there and the guard says so | no |
+| Android | `FLAG_SECURE` on the activity window, through JNI | yes |
+| X11 | nothing, deliberately — see below | no |
+| Wayland | nothing — the protocol has no such mechanism | no |
+
+`CaptureGuard::active()` is true only where the platform *enforces* something.
+On Linux it is false, and `platformReport()` names the protocol and the reason.
+
+**X11 is the interesting case.** `ignore_event_mask` is the only flag there that
+excludes a window from capture, and it also stops the window receiving input —
+applying it to the app window would break playback. `_NET_WM_BYPASS_COMPOSITOR`
+is a request the window manager may ignore, so it is a request and is reported
+as one. The code sets neither. Reaching `QXcbWindow` would also mean linking
+`libQt6XcbQpa`, for which Qt installs no CMake package on this distribution — a
+private-header dependency that builds on one machine is not a protection.
+
+**What none of this is.** Not DRM, not a watermark, not a lock. It does not stop
+a camera, a second device, a modified client, or a person with `ffmpeg` and the
+stream URL — which they have, because they were allowed to watch it. It stops an
+accidental screenshot key and a taskbar thumbnail on the platforms that enforce
+it, and nothing anywhere else.
+
+`client/tests/tst_captureguard.cpp` asserts the reporting contract rather than
+the platform behaviour, because the reporting is what can be tested from here
+and what a false claim would cost: a fresh guard claims nothing, `protect()` on
+a real window agrees with `platformReport()`, a repeated call does not
+accumulate claims, `release()` drops the claim with the protection, and the
+report never contains "DRM" or "prevents".
+
+The freedesktop.org recent-media list and the Windows taskbar's recent-media
+entries are fed from a desktop entry this client does not install and from
+system playback sessions Qt does not use, so neither is populated. There is no
+API to call and no `.desktop` file is shipped; `CaptureGuard` records the fact
+so the settings screen, this document and the test read one object.
+
 ### Error handling and logging
 
 - One error shape for every failure: `{error, message, detail, request_id}`.
@@ -279,13 +326,11 @@ This section is the reason the document exists.
 - **No DRM. No anti-piracy service. No watermark.** The brief asked for none of
   these and they are not here. Anything the server sends can be captured by
   whoever receives it.
-- **A client-side screenshot block is not a lock.** `FLAG_SECURE` on Android
-  and a secure window where the platform supports one raise the cost of a casual
-  screenshot. That code is **not written yet** — it is item 2 in
-  [ROADMAP.md](ROADMAP.md) — so today the honest statement is that the client
-  does not attempt it. It would not stop anyone with a camera, a second device,
-  or a modified client, and this document will not pretend otherwise when it
-  lands.
+- **A client-side screenshot block is not a lock.** `CaptureGuard` excludes the
+  player from capture on Windows 10 2004+ and Android, and enforces nothing on
+  X11 or Wayland — see [Screen capture and window thumbnails](#screen-capture-and-window-thumbnails)
+  for the per-platform table and why X11 gets nothing. It does not stop a camera,
+  a second device, or a modified client.
 - **An administrator can read any file the server can read.** That is the
   definition of the role on a single-user server.
 - **A stolen refresh token is a valid login** until it is used or revoked. The

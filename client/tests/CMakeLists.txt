@@ -21,6 +21,15 @@ set(STREAM_CLIENT_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/../src/credentialaccessmanager.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/../src/credentialstore.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/../src/sessioncontroller.cpp
+    # CaptureGuard is here rather than in the model set because `sessioncontroller`
+    # is linked everywhere, and every suite that links it needs the moc-generated
+    # `staticMetaObject` that `CaptureGuard`'s Q_OBJECT declares.
+    #
+    # The link failure this prevents is a confusing one: the moc output for a
+    # Q_OBJECT class referenced from a *header* in the same target is generated
+    # automatically, so nothing is missing at compile time, and the undefined
+    # reference only appears at link time.
+    ${CMAKE_CURRENT_SOURCE_DIR}/../src/captureguard.cpp
 )
 
 # The fake server, shared by the suites that need a loopback HTTP endpoint that
@@ -41,7 +50,7 @@ set(STREAM_MODEL_SOURCES
 )
 
 foreach(suite credentialaccess credentialstore apierror apiclient librarymodel
-             appcontroller playbackcontroller sessioncontroller)
+             appcontroller playbackcontroller sessioncontroller captureguard)
     if(suite STREQUAL "librarymodel" OR suite STREQUAL "appcontroller"
        OR suite STREQUAL "playbackcontroller")
         set(suite_sources ${STREAM_MODEL_SOURCES})

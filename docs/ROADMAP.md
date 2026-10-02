@@ -115,11 +115,16 @@ In order, with what each one needs.
    RUNPATH; or AppImage, which sidesteps the question by shipping a runtime
    nobody has to reconcile. Windows (`windeployqt`) and Android are expected
    to be simpler — neither goes near this code.
-2. **Client-side protections.** Screenshot blocking and `FLAG_SECURE` where the
-   platform allows it, with the limits documented where it does not. The
-   brief is explicit that a limitation must be documented rather than papered
-   over: a desktop screenshot is a desktop screenshot, and the honest claim is
-   "raises the cost of an accidental capture", not "prevents capture".
+2. ~~**Client-side protections.**~~ **Done, and the honest answer is "on two of
+   four platforms".** `CaptureGuard` sets `WDA_EXCLUDEFROMCAPTURE` on Windows
+   10 2004+ and `FLAG_SECURE` on Android — the two platforms where the system
+   enforces it. It sets nothing on X11, where the flag that works also stops the
+   window receiving input, and nothing on Wayland, whose protocol has no such
+   mechanism. The settings screen shows this device's own answer, and
+   [SECURITY.md](SECURITY.md#screen-capture-and-window-thumbnails) has the
+   per-platform table. What remains is a verification pass: the Windows and
+   Android paths have never been *run*, only compiled for, because this machine
+   is neither.
 3. **The full acceptance walkthrough**, every failure case in the brief run
    against a packaged build rather than from the source tree.
 4. **Screenshot comparison** against the supplied references, iterating until

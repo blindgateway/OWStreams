@@ -18,6 +18,7 @@
 // The model types appear in Q_PROPERTY declarations, and Qt's meta-type
 // system needs a *complete* type for a pointer property -- a forward
 // declaration is a static_assert failure, not a compile-time curiosity.
+#include "captureguard.h"
 #include "homescreenmodel.h"
 #include "librarymodel.h"
 #include "playbackcontroller.h"
@@ -64,6 +65,11 @@ class AppController : public QObject
     /// it is open cannot leave it pointing at the previous one.
     Q_PROPERTY(int playerMediaId READ playerMediaId NOTIFY screenChanged)
     Q_PROPERTY(PlaybackController *player READ player CONSTANT)
+    /// What this platform does about screen capture, said in the settings
+    /// screen.  Held here rather than on a singleton because the player is
+    /// protected by `AppController`, and the report has to describe what that
+    /// same object did.
+    Q_PROPERTY(CaptureGuard *captureGuard READ captureGuard CONSTANT)
     /// The genres, years and other values the server offers as filters, from
     /// `GET /library/categories`.  The library's filter row is built from this
     /// rather than from a hard-coded list, so a title with a genre nobody
@@ -111,6 +117,7 @@ public:
     /// new `QMediaPlayer` per poster and a new audio device fight per open, and
     /// the resume rules -- which live here -- would be re-derived every time.
     PlaybackController *player() const { return m_player; }
+    CaptureGuard *captureGuard() const { return m_captureGuard; }
 
 public slots:
     /// Called when a profile is chosen.  Everything the app shows is
@@ -200,6 +207,7 @@ private:
     MediaListModel *m_favorites;
     MediaListModel *m_history;
     MediaListModel *m_searchResults;
+    CaptureGuard *m_captureGuard;
     QVariantMap m_detail;
     int m_detailId = 0;
     QString m_searchQuery;

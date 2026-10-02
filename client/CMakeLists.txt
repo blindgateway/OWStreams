@@ -29,6 +29,10 @@ qt_add_executable(stream-client
     src/credentialstore.h
     src/credentialaccessmanager.cpp
     src/credentialaccessmanager.h
+    src/captureguard.cpp
+    src/captureguard.h
+    src/captureguard.cpp
+    src/captureguard.h
     src/sessioncontroller.cpp
     src/sessioncontroller.h
     src/librarymodel.cpp

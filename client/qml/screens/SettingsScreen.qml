@@ -42,6 +42,11 @@ Flickable {
     property string serverInfo: ""
     /// e.g. "GNOME Keyring / Secret Service", or "none".
     property string credentialBackend: ""
+    /// What this device does about screen capture.  Empty when the guard is not
+    /// present -- which is a build without it, not a device with nothing to say
+    /// -- so the section disappears rather than showing an empty heading.
+    property string captureReport: ""
+    property var captureApplied: []
     property int currentProfileId: 0
 
     readonly property bool busy: controller ? controller.busy : false
@@ -852,6 +857,46 @@ Flickable {
                 font.pixelSize: Theme.typeMicro
                 font.family: Theme.family
                 wrapMode: Text.WordWrap
+            }
+
+            // -- screen capture ---------------------------------------------
+            // Stated here rather than buried in a document, and stated as this
+            // device's answer rather than as a general claim: on Linux the
+            // answer is "nothing, and here is why", and a person deciding what
+            // to put on this machine is entitled to read that before they put
+            // something on it.
+            Text {
+                Layout.fillWidth: true
+                Layout.topMargin: Theme.spaceSm
+                text: qsTr("Screen capture")
+                color: Theme.textMuted
+                font.pixelSize: Theme.typeMicro
+                font.family: Theme.family
+                font.capitalization: Font.AllUppercase
+            }
+
+            Text {
+                Layout.fillWidth: true
+                visible: screen.captureReport !== ""
+                text: screen.captureReport
+                color: Theme.textMuted
+                font.pixelSize: Theme.typeMicro
+                font.family: Theme.family
+                wrapMode: Text.WordWrap
+            }
+
+            Repeater {
+                model: screen.captureApplied
+
+                delegate: Text {
+                    required property string modelData
+                    Layout.fillWidth: true
+                    text: "· " + modelData
+                    color: Theme.textFaint
+                    font.pixelSize: Theme.typeMicro
+                    font.family: Theme.family
+                    wrapMode: Text.WordWrap
+                }
             }
 
             RowLayout {

@@ -27,6 +27,12 @@ Item {
     /// a field on the media object.
     property var api: null
 
+    /// `AppController.captureGuard` -- set while the player is on screen, and
+    /// only then.  The guard is given a window rather than being handed a QML
+    /// object because what it protects is a native window handle, and no QML
+    /// property can name one.
+    property var guard: null
+
     /// The server's media object, remembered so the retry button can re-open
     /// the title properly.  By the time the screen is showing an error the
     /// controller no longer has it -- the error is what stopped the open.
@@ -525,10 +531,25 @@ Item {
         // the item itself: `VideoOutput` is not a `QVideoSink`, it owns one.
         if (screen.controller && screen.controller.setVideoOutput)
             screen.controller.setVideoOutput(picture.videoSink)
+        // Protect the window *before* the first frame rather than when somebody
+        // presses play: a window that is unprotected between opening the title
+        // and pressing play is a window the taskbar has already thumbnailed,
+        // and on Android the thumbnail is the capture this is meant to stop.
+        if (screen.guard)
+            screen.guard.protect(screen.window)
         // Deferred by a turn of the event loop: a Loader-created item is not
         // focusable until the loader has finished its own activation, and a
         // `forceActiveFocus()` that runs too early returns false silently.
         Qt.callLater(function () { screen.forceActiveFocus() })
+    }
+
+    // A re-map drops whatever was set on the native window -- a resolution
+    // change or a compositor restart destroys the surface and makes a new one
+    // from the same QML item -- so this is not a one-shot call.  It runs on
+    // `visible` becoming true rather than on every frame for that reason.
+    onVisibleChanged: {
+        if (screen.visible && screen.guard)
+            screen.guard.protect(screen.window)
     }
 
     Component.onDestruction: {
@@ -536,6 +557,8 @@ Item {
         // attached to the backend is a dangling frame target.
         if (screen.controller && screen.controller.setVideoOutput)
             screen.controller.setVideoOutput(null)
+        if (screen.guard)
+            screen.guard.release()
     }
 
     /// Leave, recording the position first.

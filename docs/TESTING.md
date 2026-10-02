@@ -61,6 +61,7 @@ client/tests/
 ├── tst_librarymodel.cpp         list-model roles, paging, filtering
 ├── tst_appcontroller.cpp        navigation and per-screen loading
 ├── tst_playbackcontroller.cpp   the player's rules and its progress throttle
+├── tst_captureguard.cpp         that the guard reports only what it applied
 └── e2e/                         harness.py, ServerFixture: the real server
 ```
 
@@ -375,8 +376,13 @@ Stated plainly, because a test suite that pretends is worse than none.
   timeout, a 429 or a changed response shape is written but unexercised.
 - **Windows and Android builds.** The server is platform-independent Python;
   the client builds and runs on Linux. Nothing has been compiled for a second
-  platform, so the keychain backends for Windows and macOS are written and
-  untested.
+  platform, so the keychain backends for Windows and Android are written and
+  untested, and so are `CaptureGuard`'s `WDA_EXCLUDEFROMCAPTURE` and
+  `FLAG_SECURE` paths. What *is* tested from here is the reporting: that a
+  guard claims nothing it has not applied, that `protect()` on a real window
+  agrees with `platformReport()`, and that the report never says "DRM" or
+  "prevents". The platform behaviour itself is taken from each platform's
+  documentation and has not been observed.
 - **Load.** Correctness at 1000 titles is tested; throughput at 10 concurrent
   streams is not. The design work for it is done (indexed queries, bounded
   page cache, 8 MiB chunks, per-session logging) but it is untested.

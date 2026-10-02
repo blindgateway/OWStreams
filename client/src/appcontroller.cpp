@@ -13,6 +13,7 @@ AppController::AppController(ApiClient *api, QObject *parent)
       m_favorites(new MediaListModel(this)),
       m_history(new MediaListModel(this)),
       m_searchResults(new MediaListModel(this)),
+      m_captureGuard(new CaptureGuard(this)),
       m_player(new PlaybackController(api, this))
 {
     m_library->setEmptyMessage(tr("Nothing in the library yet."));
@@ -304,6 +305,11 @@ void AppController::closePlayer()
 {
     m_player->close();
     m_playerMediaId = 0;
+    // Nothing is left to withhold: release whatever `protect()` set, so a
+    // window that is kept alive by a Loader and reused for the next title does
+    // not carry the previous one's flags.  On Linux and Android this is a no-op
+    // that only clears the reported state; on Windows it clears the flag.
+    m_captureGuard->release();
     // Back to whatever opened the player, which is almost always the detail
     // screen -- the player is a layer over it, not a destination.
     setScreen(m_screenBeforeDetail == Player ? Home : m_screenBeforeDetail);
