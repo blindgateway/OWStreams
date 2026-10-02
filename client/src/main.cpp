@@ -23,6 +23,12 @@ int main(int argc, char *argv[])
     session.restore();
 
     QQmlApplicationEngine engine;
+    // Context properties are invisible to qmllint, so they are bound to the
+    // AppContext singleton's named properties and everything else in the UI
+    // reads `App.session` / `App.api` / `App.credentials`.  One place for the
+    // linter to check, and a renamed property fails the build rather than
+    // becoming a runtime TypeError.
+    engine.rootContext()->setContextProperty(QStringLiteral("App"), nullptr);
     engine.rootContext()->setContextProperty(QStringLiteral("session"), &session);
     engine.rootContext()->setContextProperty(QStringLiteral("api"), session.api());
     engine.rootContext()->setContextProperty(QStringLiteral("credentials"),

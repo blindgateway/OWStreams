@@ -3,6 +3,7 @@ pragma ComponentBehavior: Bound
 import QtQuick
 import QtQuick.Controls
 import Stream
+import Stream as StreamModule
 
 /// Root window.
 ///
@@ -29,6 +30,16 @@ ApplicationWindow {
         case SessionController.Home:        return qsTr("home")
         default:                            return qsTr("unknown")
         }
+    }
+
+    Component.onCompleted: {
+        // Hand the C++ objects to the linter-visible singletons.  Done here
+        // rather than as context properties so every reference in the UI goes
+        // through a declared property that qmllint can check.
+        App.session = session
+        App.api = api
+        App.credentials = credentials
+        Responsive.window = root
     }
 
     Text {

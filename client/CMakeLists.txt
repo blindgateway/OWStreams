@@ -34,6 +34,7 @@ target_compile_definitions(stream-client PRIVATE
 # is declared: qt_add_qml_module reads them while collecting the file list.
 set_source_files_properties(qml/Theme.qml PROPERTIES QT_QML_SINGLETON_TYPE TRUE)
 set_source_files_properties(qml/ui/Responsive.qml PROPERTIES QT_QML_SINGLETON_TYPE TRUE)
+set_source_files_properties(qml/App.qml PROPERTIES QT_QML_SINGLETON_TYPE TRUE)
 
 qt_add_qml_module(stream-client
     URI Stream
@@ -41,12 +42,16 @@ qt_add_qml_module(stream-client
     QML_FILES
         qml/Main.qml
         qml/Theme.qml
+        qml/App.qml
         qml/ui/Responsive.qml
         qml/ui/AppButton.qml
         qml/ui/AppTextField.qml
         qml/ui/PosterCard.qml
         qml/ui/PosterRail.qml
         qml/ui/StatusPane.qml
+        qml/screens/ServerScreen.qml
+        qml/screens/LoginScreen.qml
+        qml/screens/ProfileScreen.qml
 )
 
 target_include_directories(stream-client PRIVATE src)
